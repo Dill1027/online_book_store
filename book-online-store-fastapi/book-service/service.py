@@ -1,16 +1,22 @@
-from models import Book, BookCreate
-from data_service import BookDataService
+from typing import Optional
+from data_service import BookMockDataService
 
 
 class BookService:
-    def __init__(self, data_service: BookDataService) -> None:
-        self.data_service = data_service
+    def __init__(self):
+        self.data_service = BookMockDataService()
 
-    def list_books(self) -> list[Book]:
-        return self.data_service.list_books()
+    def get_all(self, category: Optional[str] = None):
+        return self.data_service.get_all_books(category)
 
-    def get_book_by_book_id(self, book_id: str) -> Book | None:
+    def get_by_id(self, book_id: int):
         return self.data_service.get_book_by_id(book_id)
 
-    def create_book(self, payload: BookCreate) -> Book:
-        return self.data_service.create_book(payload)
+    def create(self, book_data):
+        return self.data_service.add_book(book_data)
+
+    def update(self, book_id: int, book_data):
+        return self.data_service.update_book(book_id, book_data)
+
+    def delete(self, book_id: int):
+        return self.data_service.delete_book(book_id)

@@ -1,35 +1,69 @@
+from typing import List
 from fastapi import FastAPI, HTTPException, status
-
-from data_service import CartDataService
-from models import CartItem, CartItemCreate
+from fastapi.middleware.cors import CORSMiddleware
+from models import CartItem, CartItemCreate, CartItemUpdate
 from service import CartService
 
-app = FastAPI(title="cart-service")
+app = FastAPI(title="Cart Service", version="1.0.0")
+cart_service = CartService()
 
-cart_service = CartService(CartDataService())
-
-
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"service": "cart-service", "status": "ok"}
-
-
-@app.get("/cart-items")
-def list_cart_items() -> list[CartItem]:
-    return cart_service.list_cart_items()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
-@app.get("/cart-items/{cart_id}")
-def get_cart_item_by_cart_id(cart_id: str) -> CartItem:
-    cart_item = cart_service.get_cart_item_by_cart_id(cart_id)
-    if not cart_item:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cart item not found")
-    return cart_item
+@app.get("/")
+def read_root():
+    return {"message": "Cart Service is running"}
 
 
-@app.post("/cart-items", status_code=status.HTTP_201_CREATED)
-def create_cart_item(payload: CartItemCreate) -> CartItem:
-    try:
-        return cart_service.create_cart_item(payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+@app.get("/api/cart", response_model=List[CartItem])
+def get_all_cart_items():
+    return cart_service.get_all()
+
+
+@app.get("/api/cart/{item_id}", response_model=CartItem)
+def get_cart_item(item_id: int):
+    item = cart_service.get_by_id(item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Cart item not found")
+    return item
+
+
+@app.get("/api/cart/customer/{customer_id}", response_model=List[CartItem])
+def get_customer_cart(customer_id: int):
+    return cart_service.get_by_customer_id(customer_id)
+
+
+@app.post("/api/cart", response_model=CartItem, status_code=status.HTTP_201_CREATED)
+def create_cart_item(item: CartItemCreate):
+    return cart_service.create(item)
+
+
+@app.put("/api/cart/{item_id}", response_model=CartItem)
+def update_cart_item(item_id: int, item: CartItemUpdate):
+    updated_item = cart_service.update(item_id, item)
+    if not updated_item:
+        raise HTTPException(status_code=404, detail="Cart item not found")
+    return updated_item
+
+
+@app.delete("/api/cart/{item_id}")
+def delete_cart_item(item_id: int):
+    success = cart_service.delete(item_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Cart item not found")
+    return {"message": "Cart item deleted successfully"}
+
+
+@app.delete("/api/cart/customer/{customer_id}")
+def clear_customer_cart(customer_id: int):
+    removed_count = cart_service.clear_customer_cart(customer_id)
+    return {
+        "message": "Customer cart cleared successfully",
+        "removed_count": removed_count
+    }

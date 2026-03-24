@@ -1,21 +1,70 @@
-from models import Order, OrderCreate, utcnow
+import os
+from typing import Optional
+
+from pymongo import MongoClient
+
+from models import Order, OrderCreate, OrderUpdate
 
 
-class OrderDataService:
-    def __init__(self) -> None:
-        self._orders: dict[str, Order] = {}
+class OrderMockDataService:
+    def __init__(self):
+        mongo_uri = os.getenv(
+            "MONGODB_URI",
+            "mongodb+srv://smartlearn:1234@cluster0.9ypskee.mongodb.net/smartlearn"
+        )
+        self.client = MongoClient(
+            mongo_uri,
+            serverSelectionTimeoutMS=3000,
+            connectTimeoutMS=3000,
+            socketTimeoutMS=3000
+        )
+        self.collection = self.client["smartlearn"]["orders"]
 
-    def list_orders(self) -> list[Order]:
-        return list(self._orders.values())
+    @staticmethod
+    def _to_order(document: dict | None) -> Order | None:
+        if not document:
+            return None
+        document.pop("_id", None)
+        return Order(**document)
 
-    def get_order_by_id(self, order_id: str) -> Order | None:
-        return self._orders.get(order_id)
+    def _next_id(self) -> int:
+        latest = self.collection.find_one(sort=[("id", -1)])
+        if not latest:
+            return 1
+        return int(latest.get("id", 0)) + 1
 
-    def create_order(self, payload: OrderCreate) -> Order:
-        if payload.orderId in self._orders:
-            raise ValueError("Order with this orderId already exists")
+    def get_all_orders(self):
+        docs = self.collection.find({})
+        return [self._to_order(doc) for doc in docs]
 
-        created = Order(**payload.model_dump())
-        created.updatedAt = utcnow()
-        self._orders[created.orderId] = created
-        return created
+    def get_order_by_id(self, order_id: int):
+        return self._to_order(self.collection.find_one({"id": order_id}))
+
+    def add_order(self, order_data: OrderCreate, total_amount: float, order_date: str):
+        new_order = Order(
+            id=self._next_id(),
+            customer_id=order_data.customer_id,
+            items=order_data.items,
+            total_amount=total_amount,
+            status=order_data.status or "PLACED",
+            order_date=order_date
+        )
+        self.collection.insert_one(new_order.model_dump())
+        return new_order
+
+    def update_order(self, order_id: int, order_data: OrderUpdate, total_amount: Optional[float] = None):
+        update_data = order_data.model_dump(exclude_unset=True)
+        if total_amount is not None:
+            update_data["total_amount"] = total_amount
+
+        if not update_data:
+            return self.get_order_by_id(order_id)
+
+        result = self.collection.update_one({"id": order_id}, {"$set": update_data})
+        if result.matched_count == 0:
+            return None
+        return self.get_order_by_id(order_id)
+
+    def delete_order(self, order_id: int):
+        result = self.collection.delete_one({"id": order_id})
+        return result.deleted_count > 0

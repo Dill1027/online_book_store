@@ -1,16 +1,35 @@
-from data_service import OrderDataService
-from models import Order, OrderCreate
+from datetime import date
+from data_service import OrderMockDataService
 
 
 class OrderService:
-    def __init__(self, data_service: OrderDataService) -> None:
-        self.data_service = data_service
+    def __init__(self):
+        self.data_service = OrderMockDataService()
 
-    def list_orders(self) -> list[Order]:
-        return self.data_service.list_orders()
+    def get_all(self):
+        return self.data_service.get_all_orders()
 
-    def get_order_by_order_id(self, order_id: str) -> Order | None:
+    def get_by_id(self, order_id: int):
         return self.data_service.get_order_by_id(order_id)
 
-    def create_order(self, payload: OrderCreate) -> Order:
-        return self.data_service.create_order(payload)
+    def calculate_total(self, items):
+        return sum(item.quantity * item.price for item in items)
+
+    def create(self, order_data):
+        total_amount = self.calculate_total(order_data.items)
+        order_date = date.today().isoformat()
+        return self.data_service.add_order(order_data, total_amount, order_date)
+
+    def update(self, order_id: int, order_data):
+        existing_order = self.get_by_id(order_id)
+        if not existing_order:
+            return None
+
+        total_amount = None
+        if order_data.items is not None:
+            total_amount = self.calculate_total(order_data.items)
+
+        return self.data_service.update_order(order_id, order_data, total_amount)
+
+    def delete(self, order_id: int):
+        return self.data_service.delete_order(order_id)

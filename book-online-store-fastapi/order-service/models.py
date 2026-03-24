@@ -1,30 +1,30 @@
-from datetime import datetime, timezone
-from typing import Literal
-
 from pydantic import BaseModel, Field
+from typing import List, Optional
 
 
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+class OrderItem(BaseModel):
+    book_id: int
+    title: str
+    quantity: int = Field(..., gt=0)
+    price: float = Field(..., ge=0)
 
 
-OrderStatus = Literal["Pending", "Confirmed", "Shipped", "Delivered", "Cancelled"]
+class Order(BaseModel):
+    id: int
+    customer_id: int
+    items: List[OrderItem]
+    total_amount: float
+    status: str
+    order_date: str
 
 
-class OrderBase(BaseModel):
-    orderId: str = Field(pattern=r"^O\d{3}$")
-    customerId: str = Field(pattern=r"^C\d{3}$")
-    bookId: str = Field(pattern=r"^B\d{3}$")
-    title: str = Field(min_length=1)
-    price: float = Field(ge=0)
-    quantity: int = Field(ge=1)
-    status: OrderStatus = "Pending"
+class OrderCreate(BaseModel):
+    customer_id: int
+    items: List[OrderItem]
+    status: Optional[str] = "PLACED"
 
 
-class OrderCreate(OrderBase):
-    pass
-
-
-class Order(OrderBase):
-    createdAt: datetime = Field(default_factory=utcnow)
-    updatedAt: datetime = Field(default_factory=utcnow)
+class OrderUpdate(BaseModel):
+    customer_id: Optional[int] = None
+    items: Optional[List[OrderItem]] = None
+    status: Optional[str] = None

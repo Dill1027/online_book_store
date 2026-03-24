@@ -1,26 +1,21 @@
-from datetime import datetime, timezone
-
 from pydantic import BaseModel, Field
+from typing import Optional
 
 
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+class CartItem(BaseModel):
+    id: int
+    customer_id: int
+    book_id: int
+    quantity: int = Field(..., gt=0)
 
 
-class CartItemBase(BaseModel):
-    cartId: str = Field(pattern=r"^CRT\d{3}$")
-    customerId: str = Field(pattern=r"^C\d{3}$")
-    bookId: str = Field(pattern=r"^B\d{3}$")
-    title: str = Field(min_length=1)
-    price: float = Field(ge=0)
-    quantity: int = Field(ge=1)
-    status: str = "Pending"
+class CartItemCreate(BaseModel):
+    customer_id: int
+    book_id: int
+    quantity: int = Field(..., gt=0)
 
 
-class CartItemCreate(CartItemBase):
-    pass
-
-
-class CartItem(CartItemBase):
-    createdAt: datetime = Field(default_factory=utcnow)
-    updatedAt: datetime = Field(default_factory=utcnow)
+class CartItemUpdate(BaseModel):
+    customer_id: Optional[int] = None
+    book_id: Optional[int] = None
+    quantity: Optional[int] = Field(default=None, gt=0)
