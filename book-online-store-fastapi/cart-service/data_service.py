@@ -1,47 +1,67 @@
-from typing import List
+import os
+
+from pymongo import MongoClient
+
 from models import CartItem, CartItemCreate, CartItemUpdate
 
 
 class CartMockDataService:
     def __init__(self):
-        self.cart_items: List[CartItem] = [
-            CartItem(id=1, customer_id=1, book_id=1, quantity=2),
-            CartItem(id=2, customer_id=1, book_id=2, quantity=1),
-        ]
-        self.next_id = 3
+        mongo_uri = os.getenv(
+            "MONGODB_URI",
+            "mongodb+srv://smartlearn:1234@cluster0.9ypskee.mongodb.net/smartlearn"
+        )
+        self.client = MongoClient(
+            mongo_uri,
+            serverSelectionTimeoutMS=3000,
+            connectTimeoutMS=3000,
+            socketTimeoutMS=3000
+        )
+        self.collection = self.client["smartlearn"]["cart_items"]
+
+    @staticmethod
+    def _to_cart_item(document: dict | None) -> CartItem | None:
+        if not document:
+            return None
+        document.pop("_id", None)
+        return CartItem(**document)
+
+    def _next_id(self) -> int:
+        latest = self.collection.find_one(sort=[("id", -1)])
+        if not latest:
+            return 1
+        return int(latest.get("id", 0)) + 1
 
     def get_all_cart_items(self):
-        return self.cart_items
+        docs = self.collection.find({})
+        return [self._to_cart_item(doc) for doc in docs]
 
     def get_cart_item_by_id(self, item_id: int):
-        return next((item for item in self.cart_items if item.id == item_id), None)
+        return self._to_cart_item(self.collection.find_one({"id": item_id}))
 
     def get_cart_items_by_customer_id(self, customer_id: int):
-        return [item for item in self.cart_items if item.customer_id == customer_id]
+        docs = self.collection.find({"customer_id": customer_id})
+        return [self._to_cart_item(doc) for doc in docs]
 
     def add_cart_item(self, item_data: CartItemCreate):
-        new_item = CartItem(id=self.next_id, **item_data.model_dump())
-        self.cart_items.append(new_item)
-        self.next_id += 1
+        new_item = CartItem(id=self._next_id(), **item_data.model_dump())
+        self.collection.insert_one(new_item.model_dump())
         return new_item
 
     def update_cart_item(self, item_id: int, item_data: CartItemUpdate):
-        item = self.get_cart_item_by_id(item_id)
-        if item:
-            update_data = item_data.model_dump(exclude_unset=True)
-            for key, value in update_data.items():
-                setattr(item, key, value)
-            return item
-        return None
+        update_data = item_data.model_dump(exclude_unset=True)
+        if not update_data:
+            return self.get_cart_item_by_id(item_id)
+
+        result = self.collection.update_one({"id": item_id}, {"$set": update_data})
+        if result.matched_count == 0:
+            return None
+        return self.get_cart_item_by_id(item_id)
 
     def delete_cart_item(self, item_id: int):
-        item = self.get_cart_item_by_id(item_id)
-        if item:
-            self.cart_items.remove(item)
-            return True
-        return False
+        result = self.collection.delete_one({"id": item_id})
+        return result.deleted_count > 0
 
     def clear_customer_cart(self, customer_id: int):
-        original_count = len(self.cart_items)
-        self.cart_items = [item for item in self.cart_items if item.customer_id != customer_id]
-        return original_count - len(self.cart_items)
+        result = self.collection.delete_many({"customer_id": customer_id})
+        return result.deleted_count
