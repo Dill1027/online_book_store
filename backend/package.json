@@ -1,0 +1,20 @@
+{
+  "name": "online-book-store-backend",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "book-service",
+    "customer-service",
+    "cart-service",
+    "order-service",
+    "api-gateway"
+  ],
+  "scripts": {
+    "install:all": "npm install --workspaces",
+    "start:book": "npm --workspace book-service run start",
+    "start:customer": "npm --workspace customer-service run start",
+    "start:cart": "npm --workspace cart-service run start",
+    "start:order": "npm --workspace order-service run start",
+    "start:gateway": "npm --workspace api-gateway run start"
+  }
+}
