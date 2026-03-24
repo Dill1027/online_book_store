@@ -1,107 +1,189 @@
-import os
-
-import httpx
-from fastapi import FastAPI, HTTPException, Request, Response
+from typing import Any, Optional
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+import httpx
 
-app = FastAPI(title="api-gateway")
+app = FastAPI(title="API Gateway", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
 
-BOOK_SERVICE_URL = os.getenv("BOOK_SERVICE_URL", "http://127.0.0.1:8001")
-CUSTOMER_SERVICE_URL = os.getenv("CUSTOMER_SERVICE_URL", "http://127.0.0.1:8002")
-CART_SERVICE_URL = os.getenv("CART_SERVICE_URL", "http://127.0.0.1:8003")
-ORDER_SERVICE_URL = os.getenv("ORDER_SERVICE_URL", "http://127.0.0.1:8004")
-
-HOP_BY_HOP_HEADERS = {
-    "connection",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailer",
-    "transfer-encoding",
-    "upgrade",
-    "host"
+SERVICES = {
+    "books": "http://localhost:8001",
+    "customers": "http://localhost:8002",
+    "cart": "http://localhost:8003",
+    "orders": "http://localhost:8004",
 }
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"service": "api-gateway", "status": "ok"}
+async def forward_request(
+    service: str,
+    path: str,
+    method: str,
+    json_body: Optional[dict] = None,
+    params: Optional[dict] = None
+) -> Any:
+    if service not in SERVICES:
+        raise HTTPException(status_code=404, detail="Service not found")
 
+    url = f"{SERVICES[service]}{path}"
 
-@app.get("/api/services")
-def list_services() -> dict[str, str]:
-    return {
-        "books": BOOK_SERVICE_URL,
-        "customers": CUSTOMER_SERVICE_URL,
-        "cartItems": CART_SERVICE_URL,
-        "orders": ORDER_SERVICE_URL
-    }
-
-
-async def forward_request(request: Request, target_base: str, path_suffix: str) -> Response:
-    forward_path = path_suffix if path_suffix else ""
-    target_url = f"{target_base}{forward_path}"
-
-    filtered_headers = {
-        key: value
-        for key, value in request.headers.items()
-        if key.lower() not in HOP_BY_HOP_HEADERS
-    }
-
-    body = await request.body()
-
-    try:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            upstream = await client.request(
-                method=request.method,
-                url=target_url,
-                params=request.query_params,
-                headers=filtered_headers,
-                content=body
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.request(
+                method=method,
+                url=url,
+                json=json_body,
+                params=params
             )
-    except httpx.RequestError as exc:
-        raise HTTPException(status_code=502, detail=f"Upstream request failed: {exc}") from exc
 
-    response_headers = {
-        key: value
-        for key, value in upstream.headers.items()
-        if key.lower() not in HOP_BY_HOP_HEADERS
+            try:
+                content = response.json() if response.text else None
+            except ValueError:
+                content = {"message": response.text}
+
+            return JSONResponse(content=content, status_code=response.status_code)
+
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=503, detail=f"Service unavailable: {str(exc)}")
+
+
+@app.get("/")
+def read_root():
+    return {
+        "message": "API Gateway is running",
+        "available_services": list(SERVICES.keys())
     }
-    return Response(content=upstream.content, status_code=upstream.status_code, headers=response_headers)
 
 
-@app.api_route("/api/books", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-@app.api_route("/api/books/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-async def proxy_books(request: Request, path: str = "") -> Response:
-    suffix = f"/books/{path}" if path else "/books"
-    return await forward_request(request, BOOK_SERVICE_URL, suffix)
+# Book routes
+@app.get("/gateway/books")
+async def get_all_books(request: Request):
+    return await forward_request(
+        "books",
+        "/api/books",
+        "GET",
+        params=dict(request.query_params)
+    )
 
 
-@app.api_route("/api/customers", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-@app.api_route("/api/customers/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-async def proxy_customers(request: Request, path: str = "") -> Response:
-    suffix = f"/customers/{path}" if path else "/customers"
-    return await forward_request(request, CUSTOMER_SERVICE_URL, suffix)
+@app.get("/gateway/books/{book_id}")
+async def get_book(book_id: int):
+    return await forward_request("books", f"/api/books/{book_id}", "GET")
 
 
-@app.api_route("/api/cart-items", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-@app.api_route("/api/cart-items/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-async def proxy_cart_items(request: Request, path: str = "") -> Response:
-    suffix = f"/cart-items/{path}" if path else "/cart-items"
-    return await forward_request(request, CART_SERVICE_URL, suffix)
+@app.post("/gateway/books")
+async def create_book(request: Request):
+    body = await request.json()
+    return await forward_request("books", "/api/books", "POST", json_body=body)
 
 
-@app.api_route("/api/orders", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-@app.api_route("/api/orders/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-async def proxy_orders(request: Request, path: str = "") -> Response:
-    suffix = f"/orders/{path}" if path else "/orders"
-    return await forward_request(request, ORDER_SERVICE_URL, suffix)
+@app.put("/gateway/books/{book_id}")
+async def update_book(book_id: int, request: Request):
+    body = await request.json()
+    return await forward_request("books", f"/api/books/{book_id}", "PUT", json_body=body)
+
+
+@app.delete("/gateway/books/{book_id}")
+async def delete_book(book_id: int):
+    return await forward_request("books", f"/api/books/{book_id}", "DELETE")
+
+
+# Customer routes
+@app.get("/gateway/customers")
+async def get_all_customers():
+    return await forward_request("customers", "/api/customers", "GET")
+
+
+@app.get("/gateway/customers/{customer_id}")
+async def get_customer(customer_id: int):
+    return await forward_request("customers", f"/api/customers/{customer_id}", "GET")
+
+
+@app.post("/gateway/customers")
+async def create_customer(request: Request):
+    body = await request.json()
+    return await forward_request("customers", "/api/customers", "POST", json_body=body)
+
+
+@app.put("/gateway/customers/{customer_id}")
+async def update_customer(customer_id: int, request: Request):
+    body = await request.json()
+    return await forward_request("customers", f"/api/customers/{customer_id}", "PUT", json_body=body)
+
+
+@app.delete("/gateway/customers/{customer_id}")
+async def delete_customer(customer_id: int):
+    return await forward_request("customers", f"/api/customers/{customer_id}", "DELETE")
+
+
+# Cart routes
+@app.get("/gateway/cart")
+async def get_all_cart_items():
+    return await forward_request("cart", "/api/cart", "GET")
+
+
+@app.get("/gateway/cart/{item_id}")
+async def get_cart_item(item_id: int):
+    return await forward_request("cart", f"/api/cart/{item_id}", "GET")
+
+
+@app.get("/gateway/cart/customer/{customer_id}")
+async def get_customer_cart(customer_id: int):
+    return await forward_request("cart", f"/api/cart/customer/{customer_id}", "GET")
+
+
+@app.post("/gateway/cart")
+async def create_cart_item(request: Request):
+    body = await request.json()
+    return await forward_request("cart", "/api/cart", "POST", json_body=body)
+
+
+@app.put("/gateway/cart/{item_id}")
+async def update_cart_item(item_id: int, request: Request):
+    body = await request.json()
+    return await forward_request("cart", f"/api/cart/{item_id}", "PUT", json_body=body)
+
+
+@app.delete("/gateway/cart/{item_id}")
+async def delete_cart_item(item_id: int):
+    return await forward_request("cart", f"/api/cart/{item_id}", "DELETE")
+
+
+@app.delete("/gateway/cart/customer/{customer_id}")
+async def clear_customer_cart(customer_id: int):
+    return await forward_request("cart", f"/api/cart/customer/{customer_id}", "DELETE")
+
+
+# Order routes
+@app.get("/gateway/orders")
+async def get_all_orders():
+    return await forward_request("orders", "/api/orders", "GET")
+
+
+@app.get("/gateway/orders/{order_id}")
+async def get_order(order_id: int):
+    return await forward_request("orders", f"/api/orders/{order_id}", "GET")
+
+
+@app.post("/gateway/orders")
+async def create_order(request: Request):
+    body = await request.json()
+    return await forward_request("orders", "/api/orders", "POST", json_body=body)
+
+
+@app.put("/gateway/orders/{order_id}")
+async def update_order(order_id: int, request: Request):
+    body = await request.json()
+    return await forward_request("orders", f"/api/orders/{order_id}", "PUT", json_body=body)
+
+
+@app.delete("/gateway/orders/{order_id}")
+async def delete_order(order_id: int):
+    return await forward_request("orders", f"/api/orders/{order_id}", "DELETE")
