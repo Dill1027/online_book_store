@@ -1,16 +1,27 @@
-from data_service import CartDataService
-from models import CartItem, CartItemCreate
+from data_service import CartMockDataService
 
 
 class CartService:
-    def __init__(self, data_service: CartDataService) -> None:
-        self.data_service = data_service
+    def __init__(self):
+        self.data_service = CartMockDataService()
 
-    def list_cart_items(self) -> list[CartItem]:
-        return self.data_service.list_cart_items()
+    def get_all(self):
+        return self.data_service.get_all_cart_items()
 
-    def get_cart_item_by_cart_id(self, cart_id: str) -> CartItem | None:
-        return self.data_service.get_cart_item_by_id(cart_id)
+    def get_by_id(self, item_id: int):
+        return self.data_service.get_cart_item_by_id(item_id)
 
-    def create_cart_item(self, payload: CartItemCreate) -> CartItem:
-        return self.data_service.create_cart_item(payload)
+    def get_by_customer_id(self, customer_id: int):
+        return self.data_service.get_cart_items_by_customer_id(customer_id)
+
+    def create(self, item_data):
+        return self.data_service.add_cart_item(item_data)
+
+    def update(self, item_id: int, item_data):
+        return self.data_service.update_cart_item(item_id, item_data)
+
+    def delete(self, item_id: int):
+        return self.data_service.delete_cart_item(item_id)
+
+    def clear_customer_cart(self, customer_id: int):
+        return self.data_service.clear_customer_cart(customer_id)
