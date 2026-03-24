@@ -1,24 +1,25 @@
 import os
 from typing import Optional
-
 from pymongo import MongoClient
-
+from dotenv import load_dotenv
 from models import Order, OrderCreate, OrderUpdate
 
+load_dotenv()
 
 class OrderMockDataService:
     def __init__(self):
-        mongo_uri = os.getenv(
-            "MONGODB_URI",
-            "mongodb+srv://smartlearn:1234@cluster0.9ypskee.mongodb.net/smartlearn"
-        )
+        mongo_uri = os.getenv("MONGODB_URI")
+        db_name = os.getenv("DB_NAME")
+        collection_name = os.getenv("COLLECTION_NAME")
+
         self.client = MongoClient(
             mongo_uri,
             serverSelectionTimeoutMS=3000,
             connectTimeoutMS=3000,
             socketTimeoutMS=3000
         )
-        self.collection = self.client["smartlearn"]["orders"]
+
+        self.collection = self.client[db_name][collection_name]
 
     @staticmethod
     def _to_order(document: dict | None) -> Order | None:
@@ -40,20 +41,22 @@ class OrderMockDataService:
     def get_order_by_id(self, order_id: int):
         return self._to_order(self.collection.find_one({"id": order_id}))
 
-    def add_order(self, order_data: OrderCreate, total_amount: float, order_date: str):
+    def add_order(self, order_data: OrderCreate, total_amount: float, order_date: str, address: str):
         new_order = Order(
             id=self._next_id(),
             customer_id=order_data.customer_id,
             items=order_data.items,
             total_amount=total_amount,
             status=order_data.status or "PLACED",
-            order_date=order_date
+            address=address,
+            order_date=order_date,
         )
         self.collection.insert_one(new_order.model_dump())
         return new_order
 
     def update_order(self, order_id: int, order_data: OrderUpdate, total_amount: Optional[float] = None):
         update_data = order_data.model_dump(exclude_unset=True)
+
         if total_amount is not None:
             update_data["total_amount"] = total_amount
 
@@ -61,8 +64,10 @@ class OrderMockDataService:
             return self.get_order_by_id(order_id)
 
         result = self.collection.update_one({"id": order_id}, {"$set": update_data})
+
         if result.matched_count == 0:
             return None
+
         return self.get_order_by_id(order_id)
 
     def delete_order(self, order_id: int):
