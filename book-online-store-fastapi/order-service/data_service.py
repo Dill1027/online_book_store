@@ -1,6 +1,7 @@
 import os
 from typing import Optional
 from pymongo import MongoClient
+from bson import ObjectId
 from dotenv import load_dotenv
 from models import Order, OrderCreate, OrderUpdate
 
@@ -21,40 +22,47 @@ class OrderMockDataService:
 
         self.collection = self.client[db_name][collection_name]
 
-    @staticmethod
-    def _to_order(document: dict | None) -> Order | None:
+    def _to_order(self, document):
         if not document:
             return None
+
+        document = dict(document)
+        document["id"] = str(document["_id"]) 
         document.pop("_id", None)
+
         return Order(**document)
 
-    def _next_id(self) -> int:
-        latest = self.collection.find_one(sort=[("id", -1)])
-        if not latest:
-            return 1
-        return int(latest.get("id", 0)) + 1
 
     def get_all_orders(self):
         docs = self.collection.find({})
         return [self._to_order(doc) for doc in docs]
 
-    def get_order_by_id(self, order_id: int):
-        return self._to_order(self.collection.find_one({"id": order_id}))
+    def get_order_by_id(self, order_id: str):
+        try:
+            return self._to_order(self.collection.find_one({"_id": ObjectId(order_id)}))
+        except:
+            return None
+
+    def get_orders_by_customer_id(self, customer_id: str):
+        docs = self.collection.find({"customer_id": customer_id})
+        return [self._to_order(doc) for doc in docs]
 
     def add_order(self, order_data: OrderCreate, total_amount: float, order_date: str, address: str):
-        new_order = Order(
-            id=self._next_id(),
-            customer_id=order_data.customer_id,
-            items=order_data.items,
-            total_amount=total_amount,
-            status=order_data.status or "PLACED",
-            address=address,
-            order_date=order_date,
-        )
-        self.collection.insert_one(new_order.model_dump())
-        return new_order
+        order_dict = order_data.model_dump()
 
-    def update_order(self, order_id: int, order_data: OrderUpdate, total_amount: Optional[float] = None):
+        order_dict["total_amount"] = total_amount
+        order_dict["order_date"] = order_date
+        order_dict["address"] = address
+
+        result = self.collection.insert_one(order_dict)
+
+        saved_order = self.collection.find_one({"_id": result.inserted_id})
+
+        return self._to_order(saved_order)
+
+
+
+    def update_order(self, order_id: str, order_data: OrderUpdate, total_amount: Optional[float] = None):
         update_data = order_data.model_dump(exclude_unset=True)
 
         if total_amount is not None:
@@ -63,13 +71,19 @@ class OrderMockDataService:
         if not update_data:
             return self.get_order_by_id(order_id)
 
-        result = self.collection.update_one({"id": order_id}, {"$set": update_data})
+        try:
+            result = self.collection.update_one({"_id": ObjectId(order_id)}, {"$set": update_data})
+        except:
+            return None
 
         if result.matched_count == 0:
             return None
 
         return self.get_order_by_id(order_id)
 
-    def delete_order(self, order_id: int):
-        result = self.collection.delete_one({"id": order_id})
-        return result.deleted_count > 0
+    def delete_order(self, order_id: str):
+        try:
+            result = self.collection.delete_one({"_id": ObjectId(order_id)})
+            return result.deleted_count > 0
+        except:
+            return False

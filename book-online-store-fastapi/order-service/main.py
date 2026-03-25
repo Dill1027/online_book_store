@@ -30,9 +30,14 @@ def get_all_orders():
     """Get all orders"""
     return order_service.get_all()
 
+@app.get("/api/orders/customer/{customer_id}", response_model=List[Order])
+def get_orders_by_customer(customer_id: str):
+    """Get all orders for a specific customer"""
+    return order_service.get_by_customer_id(customer_id)
+
 
 @app.get("/api/orders/{order_id}", response_model=Order)
-def get_order(order_id: int):
+def get_order(order_id: str):
     """Get an order by ID"""
     order = order_service.get_by_id(order_id)
     if not order:
@@ -47,7 +52,7 @@ def create_order(order: OrderCreate):
 
 
 @app.put("/api/orders/{order_id}", response_model=Order)
-def update_order(order_id: int, order: OrderUpdate):
+def update_order(order_id: str, order: OrderUpdate):
     """Update an order"""
     updated_order = order_service.update(order_id, order)
     if not updated_order:
@@ -56,7 +61,7 @@ def update_order(order_id: int, order: OrderUpdate):
 
 
 @app.delete("/api/orders/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_order(order_id: int):
+def delete_order(order_id: str):
     """Delete an order"""
     success = order_service.delete(order_id)
     if not success:

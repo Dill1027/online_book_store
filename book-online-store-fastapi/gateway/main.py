@@ -172,6 +172,11 @@ async def get_order(order_id: int):
     return await forward_request("orders", f"/api/orders/{order_id}", "GET")
 
 
+@app.get("/gateway/orders/customer/{customer_id}")
+async def get_customer_orders(customer_id: int):
+    return await forward_request("orders", f"/api/orders/customer/{customer_id}", "GET")
+
+
 @app.post("/gateway/orders")
 async def create_order(request: Request):
     body = await request.json()
