@@ -1,5 +1,6 @@
 from datetime import date
 from data_service import OrderMockDataService
+from models import OrderCreate, OrderUpdate
 
 
 class OrderService:
@@ -15,12 +16,12 @@ class OrderService:
     def calculate_total(self, items):
         return sum(item.quantity * item.price for item in items)
 
-    def create(self, order_data):
+    def create(self, order_data: OrderCreate):
         total_amount = self.calculate_total(order_data.items)
         order_date = date.today().isoformat()
-        return self.data_service.add_order(order_data, total_amount, order_date)
+        return self.data_service.add_order(order_data, total_amount, order_date, order_data.address)
 
-    def update(self, order_id: int, order_data):
+    def update(self, order_id: int, order_data: OrderUpdate):
         existing_order = self.get_by_id(order_id)
         if not existing_order:
             return None
