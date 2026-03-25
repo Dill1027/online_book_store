@@ -2,6 +2,7 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -159,6 +160,8 @@ async def clear_customer_cart(customer_id: int):
     return await forward_request("cart", f"/api/cart/customer/{customer_id}", "DELETE")
 
 
+
+#   Order endpoints
 @app.get("/gateway/orders")
 async def get_all_orders():
     return await forward_request("orders", "/api/orders", "GET")
