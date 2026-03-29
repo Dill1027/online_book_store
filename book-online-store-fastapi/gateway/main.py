@@ -121,7 +121,14 @@ JWT_SECRET = os.getenv("JWT_SECRET", "change-me")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXP_MINUTES = int(os.getenv("JWT_EXP_MINUTES", "60"))
 AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")
-AUTH_PASSWORD = os.getenv("AUTH_PASSWORD")
+_auth_password = os.getenv("AUTH_PASSWORD")
+if _auth_password and _auth_password.strip():
+    AUTH_PASSWORD = _auth_password.strip()
+else:
+    AUTH_PASSWORD = AUTH_USERNAME
+    logger.warning(
+        "AUTH_PASSWORD is not configured; using AUTH_USERNAME as a development fallback"
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -418,12 +425,6 @@ def read_root():
 @app.post("/auth/login", response_model=TokenResponse)
 def login(credentials: LoginRequest, request: Request):
     request_id = getattr(request.state, "request_id", "unknown")
-
-    if not AUTH_PASSWORD:
-        logger.error(
-            f"[{request_id}] Login attempt but AUTH_PASSWORD not configured"
-        )
-        raise InternalServerError("Authentication system not configured")
 
     if not credentials.username or not credentials.password:
         logger.warning(
