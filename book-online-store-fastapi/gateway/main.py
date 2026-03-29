@@ -584,11 +584,9 @@ async def clear_customer_cart(customer_id: int, request: Request):
     return await forward_request("cart", f"/api/cart/customer/{customer_id}", "DELETE", request=request)
 
 
-
-#   Order endpoints
 @app.get("/gateway/orders")
-async def get_all_orders():
-    return await forward_request("orders", "/api/orders", "GET")
+async def get_all_orders(request: Request):
+    return await forward_request("orders", "/api/orders", "GET", request=request)
 
 
 @app.get("/gateway/orders/{order_id}")
