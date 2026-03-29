@@ -16,7 +16,10 @@ class DataStoreUnavailableError(Exception):
 class CartMockDataService:
     def __init__(self):
         # Supports both mongodb:// and mongodb+srv:// formats.
-        self.mongo_uri = os.getenv("MONGODB_URI", "mongodb://127.0.0.1:27017/smartlearn")
+        self.mongo_uri = os.getenv(
+            "MONGODB_URI",
+            "mongodb+srv://prabhathdilshan2001_db_user:12345@cart.an27bae.mongodb.net/cart_items",
+        )
         # Optional fallback URI for DNS-sensitive environments.
         self.mongo_uri_fallback = os.getenv("MONGODB_URI_FALLBACK")
 
