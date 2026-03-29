@@ -255,10 +255,10 @@ async def logging_middleware(request: Request, call_next):
     return response
 
 SERVICES = {
-    "books": "http://localhost:8001",
-    "customers": "http://localhost:8002",
-    "cart": "http://localhost:8003",
-    "orders": "http://localhost:8004",
+    "books": os.getenv("BOOK_SERVICE_URL", "http://localhost:8001"),
+    "customers": os.getenv("CUSTOMER_SERVICE_URL", "http://localhost:8002"),
+    "cart": os.getenv("CART_SERVICE_URL", "http://localhost:8003"),
+    "orders": os.getenv("ORDER_SERVICE_URL", "http://localhost:8004"),
 }
 
 
@@ -540,6 +540,11 @@ async def delete_customer(customer_id: int, request: Request):
 @app.get("/gateway/cart")
 async def get_all_cart_items(request: Request):
     return await forward_request("cart", "/api/cart", "GET", request=request)
+
+
+@app.get("/gateway/cart/health")
+async def get_cart_health(request: Request):
+    return await forward_request("cart", "/health", "GET", request=request)
 
 
 @app.get("/gateway/cart/{item_id}")
