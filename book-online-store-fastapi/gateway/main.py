@@ -589,6 +589,12 @@ async def get_all_orders(request: Request):
     return await forward_request("orders", "/api/orders", "GET", request=request)
 
 
+#   Order endpoints
+@app.get("/gateway/orders")
+async def get_all_orders():
+    return await forward_request("orders", "/api/orders", "GET")
+
+
 @app.get("/gateway/orders/{order_id}")
 async def get_order(order_id: str):
     return await forward_request("orders", f"/api/orders/{order_id}", "GET")
