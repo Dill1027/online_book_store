@@ -8,9 +8,10 @@ from typing import Any, Optional
 
 import httpx
 import jwt
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, validator
 
 
@@ -121,7 +122,14 @@ JWT_SECRET = os.getenv("JWT_SECRET", "change-me")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXP_MINUTES = int(os.getenv("JWT_EXP_MINUTES", "60"))
 AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")
-AUTH_PASSWORD = os.getenv("AUTH_PASSWORD")
+_auth_password = os.getenv("AUTH_PASSWORD")
+if _auth_password and _auth_password.strip():
+    AUTH_PASSWORD = _auth_password.strip()
+else:
+    AUTH_PASSWORD = AUTH_USERNAME
+    logger.warning(
+        "AUTH_PASSWORD is not configured; using AUTH_USERNAME as a development fallback"
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -255,10 +263,10 @@ async def logging_middleware(request: Request, call_next):
     return response
 
 SERVICES = {
-    "books": "http://localhost:8001",
-    "customers": "http://localhost:8002",
-    "cart": "http://localhost:8003",
-    "orders": "http://localhost:8004",
+    "books": os.getenv("BOOK_SERVICE_URL", "http://localhost:8001"),
+    "customers": os.getenv("CUSTOMER_SERVICE_URL", "http://localhost:8002"),
+    "cart": os.getenv("CART_SERVICE_URL", "http://localhost:8003"),
+    "orders": os.getenv("ORDER_SERVICE_URL", "http://localhost:8004"),
 }
 
 
@@ -271,6 +279,9 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
+
+
+security = HTTPBearer()
 
 
 def create_access_token(subject: str) -> str:
@@ -290,6 +301,13 @@ def decode_access_token(token: str) -> dict:
         raise AuthenticationError("Token has expired")
     except jwt.InvalidTokenError:
         raise AuthenticationError("Invalid or malformed token")
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> dict:
+    token = credentials.credentials
+    return decode_access_token(token)
 
 
 @app.middleware("http")
@@ -419,12 +437,6 @@ def read_root():
 def login(credentials: LoginRequest, request: Request):
     request_id = getattr(request.state, "request_id", "unknown")
 
-    if not AUTH_PASSWORD:
-        logger.error(
-            f"[{request_id}] Login attempt but AUTH_PASSWORD not configured"
-        )
-        raise InternalServerError("Authentication system not configured")
-
     if not credentials.username or not credentials.password:
         logger.warning(
             f"[{request_id}] Login attempt with empty credentials | Username: {bool(credentials.username)}"
@@ -457,7 +469,7 @@ def login(credentials: LoginRequest, request: Request):
         raise InternalServerError(f"Token generation failed: {str(exc)}")
 
 
-@app.get("/gateway/books")
+@app.get("/gateway/books", dependencies=[Depends(get_current_user)])
 async def get_all_books(request: Request):
     return await forward_request(
         "books",
@@ -468,12 +480,12 @@ async def get_all_books(request: Request):
     )
 
 
-@app.get("/gateway/books/{book_id}")
+@app.get("/gateway/books/{book_id}", dependencies=[Depends(get_current_user)])
 async def get_book(book_id: int, request: Request):
     return await forward_request("books", f"/api/books/{book_id}", "GET", request=request)
 
 
-@app.post("/gateway/books")
+@app.post("/gateway/books", dependencies=[Depends(get_current_user)])
 async def create_book(request: Request):
     try:
         body = await request.json()
@@ -484,7 +496,7 @@ async def create_book(request: Request):
     return await forward_request("books", "/api/books", "POST", json_body=body, request=request)
 
 
-@app.put("/gateway/books/{book_id}")
+@app.put("/gateway/books/{book_id}", dependencies=[Depends(get_current_user)])
 async def update_book(book_id: int, request: Request):
     try:
         body = await request.json()
@@ -495,22 +507,22 @@ async def update_book(book_id: int, request: Request):
     return await forward_request("books", f"/api/books/{book_id}", "PUT", json_body=body, request=request)
 
 
-@app.delete("/gateway/books/{book_id}")
+@app.delete("/gateway/books/{book_id}", dependencies=[Depends(get_current_user)])
 async def delete_book(book_id: int, request: Request):
     return await forward_request("books", f"/api/books/{book_id}", "DELETE", request=request)
 
 
-@app.get("/gateway/customers")
+@app.get("/gateway/customers", dependencies=[Depends(get_current_user)])
 async def get_all_customers(request: Request):
     return await forward_request("customers", "/api/customers", "GET", request=request)
 
 
-@app.get("/gateway/customers/{customer_id}")
+@app.get("/gateway/customers/{customer_id}", dependencies=[Depends(get_current_user)])
 async def get_customer(customer_id: int, request: Request):
     return await forward_request("customers", f"/api/customers/{customer_id}", "GET", request=request)
 
 
-@app.post("/gateway/customers")
+@app.post("/gateway/customers", dependencies=[Depends(get_current_user)])
 async def create_customer(request: Request):
     try:
         body = await request.json()
@@ -521,7 +533,7 @@ async def create_customer(request: Request):
     return await forward_request("customers", "/api/customers", "POST", json_body=body, request=request)
 
 
-@app.put("/gateway/customers/{customer_id}")
+@app.put("/gateway/customers/{customer_id}", dependencies=[Depends(get_current_user)])
 async def update_customer(customer_id: int, request: Request):
     try:
         body = await request.json()
@@ -532,27 +544,32 @@ async def update_customer(customer_id: int, request: Request):
     return await forward_request("customers", f"/api/customers/{customer_id}", "PUT", json_body=body, request=request)
 
 
-@app.delete("/gateway/customers/{customer_id}")
+@app.delete("/gateway/customers/{customer_id}", dependencies=[Depends(get_current_user)])
 async def delete_customer(customer_id: int, request: Request):
     return await forward_request("customers", f"/api/customers/{customer_id}", "DELETE", request=request)
 
 
-@app.get("/gateway/cart")
+@app.get("/gateway/cart", dependencies=[Depends(get_current_user)])
 async def get_all_cart_items(request: Request):
     return await forward_request("cart", "/api/cart", "GET", request=request)
 
 
-@app.get("/gateway/cart/{item_id}")
+@app.get("/gateway/cart/health", dependencies=[Depends(get_current_user)])
+async def get_cart_health(request: Request):
+    return await forward_request("cart", "/health", "GET", request=request)
+
+
+@app.get("/gateway/cart/{item_id}", dependencies=[Depends(get_current_user)])
 async def get_cart_item(item_id: int, request: Request):
     return await forward_request("cart", f"/api/cart/{item_id}", "GET", request=request)
 
 
-@app.get("/gateway/cart/customer/{customer_id}")
+@app.get("/gateway/cart/customer/{customer_id}", dependencies=[Depends(get_current_user)])
 async def get_customer_cart(customer_id: int, request: Request):
     return await forward_request("cart", f"/api/cart/customer/{customer_id}", "GET", request=request)
 
 
-@app.post("/gateway/cart")
+@app.post("/gateway/cart", dependencies=[Depends(get_current_user)])
 async def create_cart_item(request: Request):
     try:
         body = await request.json()
@@ -563,7 +580,7 @@ async def create_cart_item(request: Request):
     return await forward_request("cart", "/api/cart", "POST", json_body=body, request=request)
 
 
-@app.put("/gateway/cart/{item_id}")
+@app.put("/gateway/cart/{item_id}", dependencies=[Depends(get_current_user)])
 async def update_cart_item(item_id: int, request: Request):
     try:
         body = await request.json()
@@ -574,66 +591,51 @@ async def update_cart_item(item_id: int, request: Request):
     return await forward_request("cart", f"/api/cart/{item_id}", "PUT", json_body=body, request=request)
 
 
-@app.delete("/gateway/cart/{item_id}")
+@app.delete("/gateway/cart/{item_id}", dependencies=[Depends(get_current_user)])
 async def delete_cart_item(item_id: int, request: Request):
     return await forward_request("cart", f"/api/cart/{item_id}", "DELETE", request=request)
 
 
-@app.delete("/gateway/cart/customer/{customer_id}")
+@app.delete("/gateway/cart/customer/{customer_id}", dependencies=[Depends(get_current_user)])
 async def clear_customer_cart(customer_id: int, request: Request):
     return await forward_request("cart", f"/api/cart/customer/{customer_id}", "DELETE", request=request)
 
 
-@app.get("/gateway/orders")
+@app.get("/gateway/orders", dependencies=[Depends(get_current_user)])
 async def get_all_orders(request: Request):
     return await forward_request("orders", "/api/orders", "GET", request=request)
 
 
-#   Order endpoints
-@app.get("/gateway/orders")
-async def get_all_orders():
-    return await forward_request("orders", "/api/orders", "GET")
+@app.get("/gateway/orders/{order_id}", dependencies=[Depends(get_current_user)])
+async def get_order(order_id: str, request: Request):
+    return await forward_request("orders", f"/api/orders/{order_id}", "GET", request=request)
 
 
-@app.get("/gateway/orders/{order_id}")
-async def get_order(order_id: str):
-    return await forward_request("orders", f"/api/orders/{order_id}", "GET")
+@app.get("/gateway/orders/customer/{customer_id}", dependencies=[Depends(get_current_user)])
+async def get_customer_orders(customer_id: str, request: Request):
+    return await forward_request("orders", f"/api/orders/customer/{customer_id}", "GET", request=request)
 
-
-@app.get("/gateway/orders/customer/{customer_id}")
-async def get_customer_orders(customer_id: str):
-    return await forward_request("orders", f"/api/orders/customer/{customer_id}", "GET")
-
-@app.post("/gateway/orders")
+@app.post("/gateway/orders", dependencies=[Depends(get_current_user)])
 async def create_order(request: Request):
-    body = await request.json()
-    return await forward_request( "orders", "/api/orders" "POST", json_body=body)
-    
-# @app.post("/gateway/orders")
-# async def create_order(order: OrderCreate):
-#     return await forward_request(
-#         "orders",
-#         "/api/orders",
-#         "POST",
-#         json_body=order.dict(by_alias=True)
-#     )
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        request_id = getattr(request.state, "request_id", "unknown")
+        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
+        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    return await forward_request("orders", "/api/orders", "POST", json_body=body, request=request)
 
-@app.put("/gateway/orders/{order_id}")
+@app.put("/gateway/orders/{order_id}", dependencies=[Depends(get_current_user)])
 async def update_order(order_id: str, request: Request):
-    body = await request.json()
-    return await forward_request( "orders", f"/api/orders/{order_id}", "PUT",json_body=body)
-
-    
-# @app.put("/gateway/orders/{order_id}")
-# async def update_order(order_id: str, order: OrderCreate):
-#     return await forward_request(
-#         "orders",
-#         f"/api/orders/{order_id}",
-#         "PUT",
-#         json_body=order.dict(by_alias=True)
-#     )
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        request_id = getattr(request.state, "request_id", "unknown")
+        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
+        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    return await forward_request("orders", f"/api/orders/{order_id}", "PUT", json_body=body, request=request)
 
 
-@app.delete("/gateway/orders/{order_id}")
-async def delete_order(order_id: str):
-    return await forward_request("orders", f"/api/orders/{order_id}", "DELETE")
+@app.delete("/gateway/orders/{order_id}", dependencies=[Depends(get_current_user)])
+async def delete_order(order_id: str, request: Request):
+    return await forward_request("orders", f"/api/orders/{order_id}", "DELETE", request=request)
