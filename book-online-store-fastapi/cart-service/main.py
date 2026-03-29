@@ -10,6 +10,7 @@ from service import CartService
 
 app = FastAPI(title="Cart Service", version="1.0.0")
 cart_service = CartService()
+NOT_FOUND_DETAIL = "Cart item not found"
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,11 +25,7 @@ app.add_middleware(
 async def datastore_unavailable_handler(request: Request, exc: DataStoreUnavailableError):
     return JSONResponse(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        content={
-            "detail": "Cart datastore is unavailable",
-            "error": str(exc),
-            "path": request.url.path,
-        },
+        content={"detail": "Cart datastore is unavailable"},
     )
 
 
@@ -37,16 +34,30 @@ def read_root():
     return {"message": "Cart Service is running"}
 
 
+@app.get("/health")
+def health_check():
+    if cart_service.ping():
+        return {"status": "ok", "datastore": "up"}
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"status": "degraded", "datastore": "down", "detail": "Cart datastore is unavailable"},
+    )
+
+
 @app.get("/api/cart", response_model=List[CartItem])
 def get_all_cart_items():
     return cart_service.get_all()
 
 
-@app.get("/api/cart/{item_id}", response_model=CartItem)
+@app.get(
+    "/api/cart/{item_id}",
+    response_model=CartItem,
+    responses={404: {"description": "Cart item not found"}},
+)
 def get_cart_item(item_id: int):
     item = cart_service.get_by_id(item_id)
     if not item:
-        raise HTTPException(status_code=404, detail="Cart item not found")
+        raise HTTPException(status_code=404, detail=NOT_FOUND_DETAIL)
     return item
 
 
@@ -60,19 +71,26 @@ def create_cart_item(item: CartItemCreate):
     return cart_service.create(item)
 
 
-@app.put("/api/cart/{item_id}", response_model=CartItem)
+@app.put(
+    "/api/cart/{item_id}",
+    response_model=CartItem,
+    responses={404: {"description": "Cart item not found"}},
+)
 def update_cart_item(item_id: int, item: CartItemUpdate):
     updated_item = cart_service.update(item_id, item)
     if not updated_item:
-        raise HTTPException(status_code=404, detail="Cart item not found")
+        raise HTTPException(status_code=404, detail=NOT_FOUND_DETAIL)
     return updated_item
 
 
-@app.delete("/api/cart/{item_id}")
+@app.delete(
+    "/api/cart/{item_id}",
+    responses={404: {"description": "Cart item not found"}},
+)
 def delete_cart_item(item_id: int):
     success = cart_service.delete(item_id)
     if not success:
-        raise HTTPException(status_code=404, detail="Cart item not found")
+        raise HTTPException(status_code=404, detail=NOT_FOUND_DETAIL)
     return {"message": "Cart item deleted successfully"}
 
 
