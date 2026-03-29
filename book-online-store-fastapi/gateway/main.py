@@ -11,7 +11,102 @@ import jwt
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
+
+
+# Error Response Models
+class ErrorDetail(BaseModel):
+    code: str
+    message: str
+    details: Optional[dict] = None
+
+
+class ErrorResponse(BaseModel):
+    request_id: str
+    status_code: int
+    timestamp: str
+    error: ErrorDetail
+    path: str
+    method: str
+
+
+# Custom Exceptions
+class GatewayException(Exception):
+    """Base exception for gateway errors"""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        status_code: int,
+        details: Optional[dict] = None,
+    ):
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+        self.details = details or {}
+        super().__init__(self.message)
+
+
+class ServiceNotFoundError(GatewayException):
+    """Raised when a service is not registered"""
+
+    def __init__(self, service: str):
+        super().__init__(
+            code="SERVICE_NOT_FOUND",
+            message=f"Service '{service}' is not registered in the gateway",
+            status_code=status.HTTP_404_NOT_FOUND,
+            details={"service": service},
+        )
+
+
+class ServiceUnavailableError(GatewayException):
+    """Raised when a service is unavailable"""
+
+    def __init__(self, service: str, reason: str):
+        super().__init__(
+            code="SERVICE_UNAVAILABLE",
+            message=f"Service '{service}' is currently unavailable",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            details={"service": service, "reason": reason},
+        )
+
+
+class AuthenticationError(GatewayException):
+    """Raised when authentication fails"""
+
+    def __init__(self, reason: str):
+        super().__init__(
+            code="AUTHENTICATION_FAILED",
+            message=f"Authentication failed: {reason}",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            details={"reason": reason},
+        )
+
+
+class ValidationError(GatewayException):
+    """Raised when request validation fails"""
+
+    def __init__(self, field: str, reason: str):
+        super().__init__(
+            code="VALIDATION_ERROR",
+            message="Request validation failed",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            details={"field": field, "reason": reason},
+        )
+
+
+class InternalServerError(GatewayException):
+    """Raised for internal server errors"""
+
+    def __init__(self, reason: str):
+        super().__init__(
+            code="INTERNAL_SERVER_ERROR",
+            message="An internal server error occurred",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            details={"reason": reason},
+        )
+
 
 app = FastAPI(title="API Gateway", version="1.0.0")
 
@@ -35,6 +130,83 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Global Exception Handlers
+@app.exception_handler(GatewayException)
+async def gateway_exception_handler(request: Request, exc: GatewayException):
+    request_id = getattr(request.state, "request_id", "unknown")
+
+    error_response = ErrorResponse(
+        request_id=request_id,
+        status_code=exc.status_code,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        error=ErrorDetail(code=exc.code, message=exc.message, details=exc.details),
+        path=request.url.path,
+        method=request.method,
+    )
+
+    log_level = "warning" if exc.status_code < 500 else "error"
+    getattr(logger, log_level)(
+        f"[{request_id}] GATEWAY ERROR | "
+        f"Code: {exc.code} | "
+        f"Status: {exc.status_code} | "
+        f"Message: {exc.message}"
+    )
+
+    return JSONResponse(
+        status_code=exc.status_code, content=error_response.dict()
+    )
+
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    request_id = getattr(request.state, "request_id", "unknown")
+
+    error_response = ErrorResponse(
+        request_id=request_id,
+        status_code=status.HTTP_400_BAD_REQUEST,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        error=ErrorDetail(
+            code="VALUE_ERROR",
+            message="Invalid request data",
+            details={"error": str(exc)},
+        ),
+        path=request.url.path,
+        method=request.method,
+    )
+
+    logger.warning(f"[{request_id}] VALUE ERROR | {str(exc)}")
+
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST, content=error_response.dict()
+    )
+
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    request_id = getattr(request.state, "request_id", "unknown")
+
+    error_response = ErrorResponse(
+        request_id=request_id,
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        error=ErrorDetail(
+            code="INTERNAL_ERROR",
+            message="An unexpected error occurred",
+            details={"error_type": type(exc).__name__},
+        ),
+        path=request.url.path,
+        method=request.method,
+    )
+
+    logger.error(f"[{request_id}] UNHANDLED EXCEPTION | {type(exc).__name__}: {str(exc)}", exc_info=True)
+
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=error_response.dict(),
+    )
+
 
 
 @app.middleware("http")
@@ -114,22 +286,15 @@ def create_access_token(subject: str) -> str:
 def decode_access_token(token: str) -> dict:
     try:
         return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-    except jwt.ExpiredSignatureError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
-    except jwt.InvalidTokenError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
+    except jwt.ExpiredSignatureError:
+        raise AuthenticationError("Token has expired")
+    except jwt.InvalidTokenError:
+        raise AuthenticationError("Invalid or malformed token")
 
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    request_id = getattr(request.state, "request_id", "unknown")
     public_paths = {
         "/",
         "/auth/login",
@@ -142,24 +307,41 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     if request.url.path.startswith("/gateway"):
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            return JSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content={"detail": "Missing or invalid Authorization header"},
-                headers={"WWW-Authenticate": "Bearer"},
+        auth_header = request.headers.get("Authorization", "").strip()
+
+        if not auth_header:
+            logger.warning(
+                f"[{request_id}] Authorization attempt without header | Path: {request.url.path}"
             )
+            raise AuthenticationError("Missing Authorization header")
+
+        if not auth_header.startswith("Bearer "):
+            logger.warning(
+                f"[{request_id}] Invalid Authorization header format | Path: {request.url.path}"
+            )
+            raise AuthenticationError("Invalid Authorization header format. Expected: Bearer <token>")
 
         token = auth_header.replace("Bearer ", "", 1).strip()
+
+        if not token:
+            logger.warning(
+                f"[{request_id}] Empty token provided | Path: {request.url.path}"
+            )
+            raise AuthenticationError("Token is empty")
+
         try:
             payload = decode_access_token(token)
             request.state.user = payload.get("sub")
-        except HTTPException as exc:
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"detail": exc.detail},
-                headers=exc.headers,
+            logger.debug(
+                f"[{request_id}] Authentication successful | User: {request.state.user}"
             )
+        except GatewayException:
+            raise
+        except Exception as exc:
+            logger.error(
+                f"[{request_id}] Unexpected error during token validation: {str(exc)}"
+            )
+            raise AuthenticationError(f"Token validation failed: {str(exc)}")
 
     return await call_next(request)
 
@@ -169,37 +351,60 @@ async def forward_request(
     path: str,
     method: str,
     json_body: Optional[dict] = None,
-    params: Optional[dict] = None
+    params: Optional[dict] = None,
+    request: Optional[Request] = None,
 ) -> Any:
+    request_id = getattr(request.state, "request_id", "unknown") if request and hasattr(request, "state") else "unknown"
+
     if service not in SERVICES:
-        return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
-            content={"detail": "Service not found"},
-        )
+        logger.error(f"[{request_id}] Attempted access to unregistered service: {service}")
+        raise ServiceNotFoundError(service)
 
     url = f"{SERVICES[service]}{path}"
+    logger.debug(
+        f"[{request_id}] Forwarding {method} request to {service} | URL: {url}"
+    )
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             response = await client.request(
                 method=method,
                 url=url,
                 json=json_body,
-                params=params
+                params=params,
             )
 
             try:
                 content = response.json() if response.text else None
-            except ValueError:
+            except json.JSONDecodeError as exc:
+                logger.warning(
+                    f"[{request_id}] Failed to parse JSON response from {service}: {str(exc)}"
+                )
                 content = {"message": response.text}
+
+            logger.debug(
+                f"[{request_id}] Received response from {service} | Status: {response.status_code}"
+            )
 
             return JSONResponse(content=content, status_code=response.status_code)
 
-        except httpx.RequestError as exc:
-            return JSONResponse(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content={"detail": f"Service unavailable: {str(exc)}"},
+        except httpx.ConnectError as exc:
+            logger.error(
+                f"[{request_id}] Connection error to {service} ({url}): {str(exc)}"
             )
+            raise ServiceUnavailableError(service, f"Connection failed: {str(exc)}")
+
+        except httpx.TimeoutException as exc:
+            logger.error(
+                f"[{request_id}] Timeout connecting to {service} ({url}): {str(exc)}"
+            )
+            raise ServiceUnavailableError(service, f"Request timeout: {str(exc)}")
+
+        except httpx.RequestError as exc:
+            logger.error(
+                f"[{request_id}] Request error to {service} ({url}): {str(exc)}"
+            )
+            raise ServiceUnavailableError(service, f"Request failed: {str(exc)}")
 
 
 @app.get("/")
@@ -211,27 +416,45 @@ def read_root():
 
 
 @app.post("/auth/login", response_model=TokenResponse)
-def login(credentials: LoginRequest):
+def login(credentials: LoginRequest, request: Request):
+    request_id = getattr(request.state, "request_id", "unknown")
+
     if not AUTH_PASSWORD:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Gateway auth is not configured",
+        logger.error(
+            f"[{request_id}] Login attempt but AUTH_PASSWORD not configured"
+        )
+        raise InternalServerError("Authentication system not configured")
+
+    if not credentials.username or not credentials.password:
+        logger.warning(
+            f"[{request_id}] Login attempt with empty credentials | Username: {bool(credentials.username)}"
+        )
+        raise ValidationError(
+            "credentials",
+            "Username and password are required",
         )
 
     if (
         credentials.username != AUTH_USERNAME
         or credentials.password != AUTH_PASSWORD
     ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password",
+        logger.warning(
+            f"[{request_id}] Failed login attempt | Username: {credentials.username}"
         )
+        raise AuthenticationError("Invalid username or password")
 
-    access_token = create_access_token(credentials.username)
-    return TokenResponse(
-        access_token=access_token,
-        expires_in=JWT_EXP_MINUTES * 60,
-    )
+    try:
+        access_token = create_access_token(credentials.username)
+        logger.info(
+            f"[{request_id}] Successful login | User: {credentials.username}"
+        )
+        return TokenResponse(
+            access_token=access_token,
+            expires_in=JWT_EXP_MINUTES * 60,
+        )
+    except Exception as exc:
+        logger.error(f"[{request_id}] Token generation failed: {str(exc)}")
+        raise InternalServerError(f"Token generation failed: {str(exc)}")
 
 
 @app.get("/gateway/books")
@@ -240,118 +463,159 @@ async def get_all_books(request: Request):
         "books",
         "/api/books",
         "GET",
-        params=dict(request.query_params)
+        params=dict(request.query_params),
+        request=request,
     )
 
 
 @app.get("/gateway/books/{book_id}")
-async def get_book(book_id: int):
-    return await forward_request("books", f"/api/books/{book_id}", "GET")
+async def get_book(book_id: int, request: Request):
+    return await forward_request("books", f"/api/books/{book_id}", "GET", request=request)
 
 
 @app.post("/gateway/books")
 async def create_book(request: Request):
-    body = await request.json()
-    return await forward_request("books", "/api/books", "POST", json_body=body)
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        request_id = getattr(request.state, "request_id", "unknown")
+        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
+        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    return await forward_request("books", "/api/books", "POST", json_body=body, request=request)
 
 
 @app.put("/gateway/books/{book_id}")
 async def update_book(book_id: int, request: Request):
-    body = await request.json()
-    return await forward_request("books", f"/api/books/{book_id}", "PUT", json_body=body)
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        request_id = getattr(request.state, "request_id", "unknown")
+        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
+        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    return await forward_request("books", f"/api/books/{book_id}", "PUT", json_body=body, request=request)
 
 
 @app.delete("/gateway/books/{book_id}")
-async def delete_book(book_id: int):
-    return await forward_request("books", f"/api/books/{book_id}", "DELETE")
+async def delete_book(book_id: int, request: Request):
+    return await forward_request("books", f"/api/books/{book_id}", "DELETE", request=request)
 
 
 @app.get("/gateway/customers")
-async def get_all_customers():
-    return await forward_request("customers", "/api/customers", "GET")
+async def get_all_customers(request: Request):
+    return await forward_request("customers", "/api/customers", "GET", request=request)
 
 
 @app.get("/gateway/customers/{customer_id}")
-async def get_customer(customer_id: int):
-    return await forward_request("customers", f"/api/customers/{customer_id}", "GET")
+async def get_customer(customer_id: int, request: Request):
+    return await forward_request("customers", f"/api/customers/{customer_id}", "GET", request=request)
 
 
 @app.post("/gateway/customers")
 async def create_customer(request: Request):
-    body = await request.json()
-    return await forward_request("customers", "/api/customers", "POST", json_body=body)
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        request_id = getattr(request.state, "request_id", "unknown")
+        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
+        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    return await forward_request("customers", "/api/customers", "POST", json_body=body, request=request)
 
 
 @app.put("/gateway/customers/{customer_id}")
 async def update_customer(customer_id: int, request: Request):
-    body = await request.json()
-    return await forward_request("customers", f"/api/customers/{customer_id}", "PUT", json_body=body)
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        request_id = getattr(request.state, "request_id", "unknown")
+        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
+        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    return await forward_request("customers", f"/api/customers/{customer_id}", "PUT", json_body=body, request=request)
 
 
 @app.delete("/gateway/customers/{customer_id}")
-async def delete_customer(customer_id: int):
-    return await forward_request("customers", f"/api/customers/{customer_id}", "DELETE")
+async def delete_customer(customer_id: int, request: Request):
+    return await forward_request("customers", f"/api/customers/{customer_id}", "DELETE", request=request)
 
 
 @app.get("/gateway/cart")
-async def get_all_cart_items():
-    return await forward_request("cart", "/api/cart", "GET")
+async def get_all_cart_items(request: Request):
+    return await forward_request("cart", "/api/cart", "GET", request=request)
 
 
 @app.get("/gateway/cart/{item_id}")
-async def get_cart_item(item_id: int):
-    return await forward_request("cart", f"/api/cart/{item_id}", "GET")
+async def get_cart_item(item_id: int, request: Request):
+    return await forward_request("cart", f"/api/cart/{item_id}", "GET", request=request)
 
 
 @app.get("/gateway/cart/customer/{customer_id}")
-async def get_customer_cart(customer_id: int):
-    return await forward_request("cart", f"/api/cart/customer/{customer_id}", "GET")
+async def get_customer_cart(customer_id: int, request: Request):
+    return await forward_request("cart", f"/api/cart/customer/{customer_id}", "GET", request=request)
 
 
 @app.post("/gateway/cart")
 async def create_cart_item(request: Request):
-    body = await request.json()
-    return await forward_request("cart", "/api/cart", "POST", json_body=body)
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        request_id = getattr(request.state, "request_id", "unknown")
+        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
+        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    return await forward_request("cart", "/api/cart", "POST", json_body=body, request=request)
 
 
 @app.put("/gateway/cart/{item_id}")
 async def update_cart_item(item_id: int, request: Request):
-    body = await request.json()
-    return await forward_request("cart", f"/api/cart/{item_id}", "PUT", json_body=body)
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        request_id = getattr(request.state, "request_id", "unknown")
+        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
+        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    return await forward_request("cart", f"/api/cart/{item_id}", "PUT", json_body=body, request=request)
 
 
 @app.delete("/gateway/cart/{item_id}")
-async def delete_cart_item(item_id: int):
-    return await forward_request("cart", f"/api/cart/{item_id}", "DELETE")
+async def delete_cart_item(item_id: int, request: Request):
+    return await forward_request("cart", f"/api/cart/{item_id}", "DELETE", request=request)
 
 
 @app.delete("/gateway/cart/customer/{customer_id}")
-async def clear_customer_cart(customer_id: int):
-    return await forward_request("cart", f"/api/cart/customer/{customer_id}", "DELETE")
+async def clear_customer_cart(customer_id: int, request: Request):
+    return await forward_request("cart", f"/api/cart/customer/{customer_id}", "DELETE", request=request)
 
 
 @app.get("/gateway/orders")
-async def get_all_orders():
-    return await forward_request("orders", "/api/orders", "GET")
+async def get_all_orders(request: Request):
+    return await forward_request("orders", "/api/orders", "GET", request=request)
 
 
 @app.get("/gateway/orders/{order_id}")
-async def get_order(order_id: int):
-    return await forward_request("orders", f"/api/orders/{order_id}", "GET")
+async def get_order(order_id: int, request: Request):
+    return await forward_request("orders", f"/api/orders/{order_id}", "GET", request=request)
 
 
 @app.post("/gateway/orders")
 async def create_order(request: Request):
-    body = await request.json()
-    return await forward_request("orders", "/api/orders", "POST", json_body=body)
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        request_id = getattr(request.state, "request_id", "unknown")
+        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
+        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    return await forward_request("orders", "/api/orders", "POST", json_body=body, request=request)
 
 
 @app.put("/gateway/orders/{order_id}")
 async def update_order(order_id: int, request: Request):
-    body = await request.json()
-    return await forward_request("orders", f"/api/orders/{order_id}", "PUT", json_body=body)
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        request_id = getattr(request.state, "request_id", "unknown")
+        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
+        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    return await forward_request("orders", f"/api/orders/{order_id}", "PUT", json_body=body, request=request)
 
 
 @app.delete("/gateway/orders/{order_id}")
-async def delete_order(order_id: int):
-    return await forward_request("orders", f"/api/orders/{order_id}", "DELETE")
+async def delete_order(order_id: int, request: Request):
+    return await forward_request("orders", f"/api/orders/{order_id}", "DELETE", request=request)
