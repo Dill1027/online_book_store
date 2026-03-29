@@ -1,24 +1,31 @@
-from datetime import datetime, timezone
+# book-service/models.py
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from typing import Optional
 
-
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-class BookBase(BaseModel):
-    bookId: str = Field(pattern=r"^B\d{3}$")
-    title: str = Field(min_length=1)
-    price: float = Field(ge=0)
-    quantity: int = Field(ge=0)
-    status: str = "Active"
+# Main Book Model (response model)
+class Book(BaseModel):
+    id: int
+    title: str
+    author: str
+    category: str
+    price: float
+    stock: int
 
 
-class BookCreate(BookBase):
-    pass
+# Model for creating a new book
+class BookCreate(BaseModel):
+    title: str
+    author: str
+    category: str
+    price: float
+    stock: int
 
 
-class Book(BookBase):
-    createdAt: datetime = Field(default_factory=utcnow)
-    updatedAt: datetime = Field(default_factory=utcnow)
+# Model for updating a book (all optional fields)
+class BookUpdate(BaseModel):
+    title: Optional[str] = None
+    author: Optional[str] = None
+    category: Optional[str] = None
+    price: Optional[float] = None
+    stock: Optional[int] = None
