@@ -1,6 +1,10 @@
 from typing import List
-from fastapi import FastAPI, HTTPException, status
+
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from data_service import DataStoreUnavailableError
 from models import CartItem, CartItemCreate, CartItemUpdate
 from service import CartService
 
@@ -14,6 +18,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(DataStoreUnavailableError)
+async def datastore_unavailable_handler(request: Request, exc: DataStoreUnavailableError):
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "detail": "Cart datastore is unavailable",
+            "error": str(exc),
+            "path": request.url.path,
+        },
+    )
 
 
 @app.get("/")
@@ -65,5 +81,5 @@ def clear_customer_cart(customer_id: int):
     removed_count = cart_service.clear_customer_cart(customer_id)
     return {
         "message": "Customer cart cleared successfully",
-        "removed_count": removed_count
+        "removed_count": removed_count,
     }
