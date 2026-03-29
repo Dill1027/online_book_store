@@ -10,8 +10,11 @@ class OrderService:
     def get_all(self):
         return self.data_service.get_all_orders()
 
-    def get_by_id(self, order_id: int):
+    def get_by_id(self, order_id: str):
         return self.data_service.get_order_by_id(order_id)
+
+    def get_by_customer_id(self, customer_id: str):
+        return self.data_service.get_orders_by_customer_id(customer_id)
 
     def calculate_total(self, items):
         return sum(item.quantity * item.price for item in items)
@@ -21,7 +24,7 @@ class OrderService:
         order_date = date.today().isoformat()
         return self.data_service.add_order(order_data, total_amount, order_date, order_data.address)
 
-    def update(self, order_id: int, order_data: OrderUpdate):
+    def update(self, order_id: str, order_data: OrderUpdate):
         existing_order = self.get_by_id(order_id)
         if not existing_order:
             return None
@@ -32,5 +35,5 @@ class OrderService:
 
         return self.data_service.update_order(order_id, order_data, total_amount)
 
-    def delete(self, order_id: int):
+    def delete(self, order_id: str):
         return self.data_service.delete_order(order_id)
