@@ -589,51 +589,36 @@ async def get_all_orders(request: Request):
     return await forward_request("orders", "/api/orders", "GET", request=request)
 
 
-#   Order endpoints
-@app.get("/gateway/orders")
-async def get_all_orders():
-    return await forward_request("orders", "/api/orders", "GET")
-
-
 @app.get("/gateway/orders/{order_id}")
-async def get_order(order_id: str):
-    return await forward_request("orders", f"/api/orders/{order_id}", "GET")
+async def get_order(order_id: str, request: Request):
+    return await forward_request("orders", f"/api/orders/{order_id}", "GET", request=request)
 
 
 @app.get("/gateway/orders/customer/{customer_id}")
-async def get_customer_orders(customer_id: str):
-    return await forward_request("orders", f"/api/orders/customer/{customer_id}", "GET")
+async def get_customer_orders(customer_id: str, request: Request):
+    return await forward_request("orders", f"/api/orders/customer/{customer_id}", "GET", request=request)
 
 @app.post("/gateway/orders")
 async def create_order(request: Request):
-    body = await request.json()
-    return await forward_request( "orders", "/api/orders" "POST", json_body=body)
-    
-# @app.post("/gateway/orders")
-# async def create_order(order: OrderCreate):
-#     return await forward_request(
-#         "orders",
-#         "/api/orders",
-#         "POST",
-#         json_body=order.dict(by_alias=True)
-#     )
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        request_id = getattr(request.state, "request_id", "unknown")
+        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
+        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    return await forward_request("orders", "/api/orders", "POST", json_body=body, request=request)
 
 @app.put("/gateway/orders/{order_id}")
 async def update_order(order_id: str, request: Request):
-    body = await request.json()
-    return await forward_request( "orders", f"/api/orders/{order_id}", "PUT",json_body=body)
-
-    
-# @app.put("/gateway/orders/{order_id}")
-# async def update_order(order_id: str, order: OrderCreate):
-#     return await forward_request(
-#         "orders",
-#         f"/api/orders/{order_id}",
-#         "PUT",
-#         json_body=order.dict(by_alias=True)
-#     )
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        request_id = getattr(request.state, "request_id", "unknown")
+        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
+        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    return await forward_request("orders", f"/api/orders/{order_id}", "PUT", json_body=body, request=request)
 
 
 @app.delete("/gateway/orders/{order_id}")
-async def delete_order(order_id: str):
-    return await forward_request("orders", f"/api/orders/{order_id}", "DELETE")
+async def delete_order(order_id: str, request: Request):
+    return await forward_request("orders", f"/api/orders/{order_id}", "DELETE", request=request)
