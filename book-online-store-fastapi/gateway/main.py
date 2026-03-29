@@ -1,4 +1,8 @@
 import os
+import logging
+import json
+import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -10,6 +14,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 app = FastAPI(title="API Gateway", version="1.0.0")
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("api-gateway")
 
 JWT_SECRET = os.getenv("JWT_SECRET", "change-me")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
@@ -24,6 +35,52 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def logging_middleware(request: Request, call_next):
+    request_id = str(uuid.uuid4())
+    request.state.request_id = request_id
+
+    start_time = time.time()
+    request_body = None
+
+    if request.method in ["POST", "PUT", "PATCH"]:
+        try:
+            request_body = await request.body()
+
+            def receive():
+                return {"type": "http.request", "body": request_body}
+
+            request._receive = receive
+        except Exception:
+            pass
+
+    logger.info(
+        f"[{request_id}] INCOMING REQUEST | "
+        f"Method: {request.method} | "
+        f"Path: {request.url.path} | "
+        f"Client: {request.client.host if request.client else 'unknown'}"
+    )
+
+    if request_body:
+        try:
+            body_str = request_body.decode("utf-8")
+            logger.debug(f"[{request_id}] REQUEST BODY | {body_str}")
+        except Exception:
+            logger.debug(f"[{request_id}] REQUEST BODY | (binary or decode error)")
+
+    response = await call_next(request)
+
+    process_time = time.time() - start_time
+
+    logger.info(
+        f"[{request_id}] OUTGOING RESPONSE | "
+        f"Status: {response.status_code} | "
+        f"Duration: {process_time:.3f}s"
+    )
+
+    return response
 
 SERVICES = {
     "books": "http://localhost:8001",
