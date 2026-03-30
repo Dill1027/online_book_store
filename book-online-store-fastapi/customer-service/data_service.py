@@ -2,22 +2,20 @@ import os
 
 from pymongo import MongoClient
 
+from config import COLLECTION_NAME, DB_NAME, MONGO_URI
 from models import Customer, CustomerCreate, CustomerUpdate
 
 
 class CustomerMockDataService:
     def __init__(self):
-        mongo_uri = os.getenv(
-            "MONGODB_URI",
-            "mongodb+srv://smartlearn:1234@cluster0.9ypskee.mongodb.net/smartlearn"
-        )
+        mongo_uri = os.getenv("MONGODB_URI", MONGO_URI)
         self.client = MongoClient(
             mongo_uri,
             serverSelectionTimeoutMS=3000,
             connectTimeoutMS=3000,
             socketTimeoutMS=3000
         )
-        self.collection = self.client["smartlearn"]["customers"]
+        self.collection = self.client[DB_NAME][COLLECTION_NAME]
 
     @staticmethod
     def _to_customer(document: dict | None) -> Customer | None:
