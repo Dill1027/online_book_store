@@ -270,10 +270,15 @@ async def logging_middleware(request: Request, call_next):
 
 SERVICES = {
     "books": os.getenv("BOOK_SERVICE_URL", "http://localhost:8001"),
+    "book": os.getenv("BOOK_SERVICE_URL", "http://localhost:8001"),
     "customers": os.getenv("CUSTOMER_SERVICE_URL", "http://localhost:8002"),
+    "customer": os.getenv("CUSTOMER_SERVICE_URL", "http://localhost:8002"),
     "cart": os.getenv("CART_SERVICE_URL", "http://localhost:8003"),
     "orders": os.getenv("ORDER_SERVICE_URL", "http://localhost:8004"),
+    "order": os.getenv("ORDER_SERVICE_URL", "http://localhost:8004"),
 }
+
+BODY_METHODS = {"POST", "PUT", "PATCH"}
 
 
 class LoginRequest(BaseModel):
@@ -434,6 +439,18 @@ async def forward_request(
             raise ServiceUnavailableError(service, f"Request failed: {str(exc)}")
 
 
+async def parse_json_body(request: Request) -> Optional[dict]:
+    if request.method.upper() not in BODY_METHODS:
+        return None
+
+    try:
+        return await request.json()
+    except json.JSONDecodeError as exc:
+        request_id = getattr(request.state, "request_id", "unknown")
+        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
+        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+
+
 @app.get("/")
 def read_root():
     return {
@@ -476,6 +493,29 @@ def login(credentials: LoginRequest, request: Request):
     except Exception as exc:
         logger.error(f"[{request_id}] Token generation failed: {str(exc)}")
         raise InternalServerError(f"Token generation failed: {str(exc)}")
+
+
+@app.api_route(
+    "/gateway/proxy/{service}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    dependencies=[Depends(get_current_user)],
+)
+@app.api_route(
+    "/gateway/proxy/{service}/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    dependencies=[Depends(get_current_user)],
+)
+async def proxy_service(service: str, request: Request, path: str = ""):
+    route_path = f"/{path}" if path else ""
+    body = await parse_json_body(request)
+    return await forward_request(
+        service=service,
+        path=route_path,
+        method=request.method,
+        json_body=body,
+        params=dict(request.query_params),
+        request=request,
+    )
 
 
 @app.get("/gateway/books", dependencies=[Depends(get_current_user)])
