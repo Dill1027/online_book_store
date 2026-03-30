@@ -271,9 +271,9 @@ async def logging_middleware(request: Request, call_next):
 SERVICES = {
     "books": os.getenv("BOOK_SERVICE_URL", "http://localhost:8001"),
     "book": os.getenv("BOOK_SERVICE_URL", "http://localhost:8001"),
-    "customers": os.getenv("CUSTOMER_SERVICE_URL", "http://localhost:8002"),
-    "customer": os.getenv("CUSTOMER_SERVICE_URL", "http://localhost:8002"),
-    "cart": os.getenv("CART_SERVICE_URL", "http://localhost:8003"),
+    "cart": os.getenv("CART_SERVICE_URL", "http://localhost:8002"),
+    "customers": os.getenv("CUSTOMER_SERVICE_URL", "http://localhost:8003"),
+    "customer": os.getenv("CUSTOMER_SERVICE_URL", "http://localhost:8003"),
     "orders": os.getenv("ORDER_SERVICE_URL", "http://localhost:8004"),
     "order": os.getenv("ORDER_SERVICE_URL", "http://localhost:8004"),
 }
