@@ -16,8 +16,8 @@ app.add_middleware(
 
 SERVICES = {
     "books": "http://localhost:8001",
-    "customers": "http://localhost:8002",
-    "cart": "http://localhost:8003",
+    "customers": "http://localhost:8003",
+    "cart": "http://localhost:8002",
     "orders": "http://localhost:8004",
 }
 
