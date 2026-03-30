@@ -22,8 +22,13 @@ def read_root():
 
 
 @app.get("/api/books", response_model=List[Book])
-def get_all_books(category: Optional[str] = Query(default=None)):
-    return book_service.get_all(category)
+def get_all_books(
+    title: Optional[str] = Query(None),
+    author: Optional[str] = Query(None),
+    category: Optional[str] = Query(None)
+):
+    """Get all books (with optional search by title, author, category)"""
+    return book_service.get_all(title, author, category)
 
 
 @app.get("/api/books/{book_id}", response_model=Book)
