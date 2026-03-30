@@ -2,6 +2,7 @@ import os
 import logging
 import json
 import time
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -10,7 +11,7 @@ import httpx
 import jwt
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, validator
 
@@ -229,8 +230,13 @@ async def logging_middleware(request: Request, call_next):
         try:
             request_body = await request.body()
 
-            def receive():
-                return {"type": "http.request", "body": request_body}
+            async def receive():
+                await asyncio.sleep(0)
+                return {
+                    "type": "http.request",
+                    "body": request_body,
+                    "more_body": False,
+                }
 
             request._receive = receive
         except Exception:
@@ -391,6 +397,9 @@ async def forward_request(
                 json=json_body,
                 params=params,
             )
+
+            if response.status_code == status.HTTP_204_NO_CONTENT or not response.content:
+                return Response(status_code=response.status_code)
 
             try:
                 content = response.json() if response.text else None
