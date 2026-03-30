@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 from bson import ObjectId
+from config import MONGO_URI, DB_NAME, COLLECTION_NAME
 from models import Customer, CustomerCreate, CustomerUpdate
 
 load_dotenv()
@@ -10,9 +11,9 @@ load_dotenv()
 
 class CustomerMockDataService:
     def __init__(self):
-        mongo_uri = os.getenv("MONGODB_URI")
-        db_name = os.getenv("DB_NAME")
-        collection_name = os.getenv("COLLECTION_NAME")
+        mongo_uri = os.getenv("MONGODB_URI") or os.getenv("MONGO_URI") or MONGO_URI
+        db_name = os.getenv("DB_NAME") or DB_NAME
+        collection_name = os.getenv("COLLECTION_NAME") or COLLECTION_NAME
 
         if not mongo_uri or not db_name or not collection_name:
             raise ValueError("Missing MongoDB environment variables in .env file")
