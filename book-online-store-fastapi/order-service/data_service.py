@@ -3,15 +3,16 @@ from typing import Optional
 from pymongo import MongoClient
 from bson import ObjectId
 from dotenv import load_dotenv
+from config import MONGO_URI, DB_NAME, COLLECTION_NAME
 from models import Order, OrderCreate, OrderUpdate
 
 load_dotenv()
 
 class OrderMockDataService:
     def __init__(self):
-        mongo_uri = os.getenv("MONGODB_URI")
-        db_name = os.getenv("DB_NAME")
-        collection_name = os.getenv("COLLECTION_NAME")
+        mongo_uri = os.getenv("MONGODB_URI", MONGO_URI)
+        db_name = os.getenv("DB_NAME", DB_NAME)
+        collection_name = os.getenv("COLLECTION_NAME", COLLECTION_NAME)
 
         self.client = MongoClient(
             mongo_uri,
@@ -40,7 +41,7 @@ class OrderMockDataService:
     def get_order_by_id(self, order_id: str):
         try:
             return self._to_order(self.collection.find_one({"_id": ObjectId(order_id)}))
-        except:
+        except Exception:
             return None
 
     def get_orders_by_customer_id(self, customer_id: str):
@@ -73,7 +74,7 @@ class OrderMockDataService:
 
         try:
             result = self.collection.update_one({"_id": ObjectId(order_id)}, {"$set": update_data})
-        except:
+        except Exception:
             return None
 
         if result.matched_count == 0:
@@ -85,5 +86,5 @@ class OrderMockDataService:
         try:
             result = self.collection.delete_one({"_id": ObjectId(order_id)})
             return result.deleted_count > 0
-        except:
+        except Exception:
             return False

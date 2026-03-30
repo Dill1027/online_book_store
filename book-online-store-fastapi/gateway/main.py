@@ -2,6 +2,7 @@ import os
 import logging
 import json
 import time
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -10,7 +11,7 @@ import httpx
 import jwt
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, validator
 
@@ -229,8 +230,13 @@ async def logging_middleware(request: Request, call_next):
         try:
             request_body = await request.body()
 
-            def receive():
-                return {"type": "http.request", "body": request_body}
+            async def receive():
+                await asyncio.sleep(0)
+                return {
+                    "type": "http.request",
+                    "body": request_body,
+                    "more_body": False,
+                }
 
             request._receive = receive
         except Exception:
@@ -262,12 +268,20 @@ async def logging_middleware(request: Request, call_next):
 
     return response
 
+ORDER_SERVICE_DEFAULT_URL = "http://localhost:8004"
+
 SERVICES = {
     "books": os.getenv("BOOK_SERVICE_URL", "http://localhost:8001"),
-    "customers": os.getenv("CUSTOMER_SERVICE_URL", "http://localhost:8002"),
-    "cart": os.getenv("CART_SERVICE_URL", "http://localhost:8003"),
-    "orders": os.getenv("ORDER_SERVICE_URL", "http://localhost:8004"),
+    "book": os.getenv("BOOK_SERVICE_URL", "http://localhost:8001"),
+    "cart": os.getenv("CART_SERVICE_URL", "http://localhost:8002"),
+    "customers": os.getenv("CUSTOMER_SERVICE_URL", "http://localhost:8003"),
+    "customer": os.getenv("CUSTOMER_SERVICE_URL", "http://localhost:8003"),
+    "orders": os.getenv("ORDER_SERVICE_URL", ORDER_SERVICE_DEFAULT_URL),
+    "order": os.getenv("ORDER_SERVICE_URL", ORDER_SERVICE_DEFAULT_URL),
+    "order-service": os.getenv("ORDER_SERVICE_URL", ORDER_SERVICE_DEFAULT_URL),
 }
+
+BODY_METHODS = {"POST", "PUT", "PATCH"}
 
 
 class LoginRequest(BaseModel):
@@ -392,6 +406,9 @@ async def forward_request(
                 params=params,
             )
 
+            if response.status_code == status.HTTP_204_NO_CONTENT or not response.content:
+                return Response(status_code=response.status_code)
+
             try:
                 content = response.json() if response.text else None
             except json.JSONDecodeError as exc:
@@ -423,6 +440,18 @@ async def forward_request(
                 f"[{request_id}] Request error to {service} ({url}): {str(exc)}"
             )
             raise ServiceUnavailableError(service, f"Request failed: {str(exc)}")
+
+
+async def parse_json_body(request: Request) -> Optional[dict]:
+    if request.method.upper() not in BODY_METHODS:
+        return None
+
+    try:
+        return await request.json()
+    except json.JSONDecodeError as exc:
+        request_id = getattr(request.state, "request_id", "unknown")
+        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
+        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
 
 
 @app.get("/")
@@ -469,6 +498,29 @@ def login(credentials: LoginRequest, request: Request):
         raise InternalServerError(f"Token generation failed: {str(exc)}")
 
 
+@app.api_route(
+    "/gateway/proxy/{service}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    dependencies=[Depends(get_current_user)],
+)
+@app.api_route(
+    "/gateway/proxy/{service}/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    dependencies=[Depends(get_current_user)],
+)
+async def proxy_service(service: str, request: Request, path: str = ""):
+    route_path = f"/{path}" if path else ""
+    body = await parse_json_body(request)
+    return await forward_request(
+        service=service,
+        path=route_path,
+        method=request.method,
+        json_body=body,
+        params=dict(request.query_params),
+        request=request,
+    )
+
+
 @app.get("/gateway/books", dependencies=[Depends(get_current_user)])
 async def get_all_books(request: Request):
     return await forward_request(
@@ -487,23 +539,13 @@ async def get_book(book_id: int, request: Request):
 
 @app.post("/gateway/books", dependencies=[Depends(get_current_user)])
 async def create_book(request: Request):
-    try:
-        body = await request.json()
-    except json.JSONDecodeError as exc:
-        request_id = getattr(request.state, "request_id", "unknown")
-        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
-        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    body = await parse_json_body(request)
     return await forward_request("books", "/api/books", "POST", json_body=body, request=request)
 
 
 @app.put("/gateway/books/{book_id}", dependencies=[Depends(get_current_user)])
 async def update_book(book_id: int, request: Request):
-    try:
-        body = await request.json()
-    except json.JSONDecodeError as exc:
-        request_id = getattr(request.state, "request_id", "unknown")
-        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
-        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    body = await parse_json_body(request)
     return await forward_request("books", f"/api/books/{book_id}", "PUT", json_body=body, request=request)
 
 
@@ -524,23 +566,13 @@ async def get_customer(customer_id: int, request: Request):
 
 @app.post("/gateway/customers", dependencies=[Depends(get_current_user)])
 async def create_customer(request: Request):
-    try:
-        body = await request.json()
-    except json.JSONDecodeError as exc:
-        request_id = getattr(request.state, "request_id", "unknown")
-        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
-        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    body = await parse_json_body(request)
     return await forward_request("customers", "/api/customers", "POST", json_body=body, request=request)
 
 
 @app.put("/gateway/customers/{customer_id}", dependencies=[Depends(get_current_user)])
 async def update_customer(customer_id: int, request: Request):
-    try:
-        body = await request.json()
-    except json.JSONDecodeError as exc:
-        request_id = getattr(request.state, "request_id", "unknown")
-        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
-        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    body = await parse_json_body(request)
     return await forward_request("customers", f"/api/customers/{customer_id}", "PUT", json_body=body, request=request)
 
 
@@ -571,23 +603,13 @@ async def get_customer_cart(customer_id: int, request: Request):
 
 @app.post("/gateway/cart", dependencies=[Depends(get_current_user)])
 async def create_cart_item(request: Request):
-    try:
-        body = await request.json()
-    except json.JSONDecodeError as exc:
-        request_id = getattr(request.state, "request_id", "unknown")
-        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
-        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    body = await parse_json_body(request)
     return await forward_request("cart", "/api/cart", "POST", json_body=body, request=request)
 
 
 @app.put("/gateway/cart/{item_id}", dependencies=[Depends(get_current_user)])
 async def update_cart_item(item_id: int, request: Request):
-    try:
-        body = await request.json()
-    except json.JSONDecodeError as exc:
-        request_id = getattr(request.state, "request_id", "unknown")
-        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
-        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    body = await parse_json_body(request)
     return await forward_request("cart", f"/api/cart/{item_id}", "PUT", json_body=body, request=request)
 
 
@@ -617,22 +639,12 @@ async def get_customer_orders(customer_id: str, request: Request):
 
 @app.post("/gateway/orders", dependencies=[Depends(get_current_user)])
 async def create_order(request: Request):
-    try:
-        body = await request.json()
-    except json.JSONDecodeError as exc:
-        request_id = getattr(request.state, "request_id", "unknown")
-        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
-        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    body = await parse_json_body(request)
     return await forward_request("orders", "/api/orders", "POST", json_body=body, request=request)
 
 @app.put("/gateway/orders/{order_id}", dependencies=[Depends(get_current_user)])
 async def update_order(order_id: str, request: Request):
-    try:
-        body = await request.json()
-    except json.JSONDecodeError as exc:
-        request_id = getattr(request.state, "request_id", "unknown")
-        logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
-        raise ValidationError("body", f"Invalid JSON: {str(exc)}")
+    body = await parse_json_body(request)
     return await forward_request("orders", f"/api/orders/{order_id}", "PUT", json_body=body, request=request)
 
 
