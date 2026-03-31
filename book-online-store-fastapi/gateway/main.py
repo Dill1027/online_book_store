@@ -272,13 +272,9 @@ ORDER_SERVICE_DEFAULT_URL = "http://localhost:8004"
 
 SERVICES = {
     "books": os.getenv("BOOK_SERVICE_URL", "http://localhost:8001"),
-    "book": os.getenv("BOOK_SERVICE_URL", "http://localhost:8001"),
     "cart": os.getenv("CART_SERVICE_URL", "http://localhost:8002"),
     "customers": os.getenv("CUSTOMER_SERVICE_URL", "http://localhost:8003"),
-    "customer": os.getenv("CUSTOMER_SERVICE_URL", "http://localhost:8003"),
-    "orders": os.getenv("ORDER_SERVICE_URL", ORDER_SERVICE_DEFAULT_URL),
-    "order": os.getenv("ORDER_SERVICE_URL", ORDER_SERVICE_DEFAULT_URL),
-    "order-service": os.getenv("ORDER_SERVICE_URL", ORDER_SERVICE_DEFAULT_URL),
+    "orders": os.getenv("ORDER_SERVICE_URL", "http://localhost:8004"),
 }
 
 BODY_METHODS = {"POST", "PUT", "PATCH"}
