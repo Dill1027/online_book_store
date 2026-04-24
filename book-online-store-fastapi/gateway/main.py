@@ -110,7 +110,35 @@ class InternalServerError(GatewayException):
         )
 
 
-app = FastAPI(title="API Gateway", version="1.0.0")
+OPENAPI_TAGS = [
+    {
+        "name": "Auth",
+        "description": "Authentication endpoints for login and token issuance.",
+    },
+    {
+        "name": "Books",
+        "description": "Book service endpoints exposed via the API Gateway.",
+    },
+    {
+        "name": "Cart",
+        "description": "Cart service endpoints exposed via the API Gateway.",
+    },
+    {
+        "name": "Customers",
+        "description": "Customer service endpoints exposed via the API Gateway.",
+    },
+    {
+        "name": "Orders",
+        "description": "Order service endpoints exposed via the API Gateway.",
+    },
+    {
+        "name": "Proxy",
+        "description": "Generic proxy endpoints to forward requests to registered services.",
+    },
+]
+
+
+app = FastAPI(title="API Gateway", version="1.0.0", openapi_tags=OPENAPI_TAGS)
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 logging.basicConfig(
@@ -471,6 +499,11 @@ def get_current_user(
     return decode_access_token(token)
 
 
+PROTECTED_ROUTE_DEPENDENCIES = [
+    Depends(get_current_user),
+]
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     request_id = getattr(request.state, "request_id", "unknown")
@@ -616,7 +649,7 @@ def read_root():
     }
 
 
-@app.post("/auth/login", response_model=TokenResponse)
+@app.post("/auth/login", response_model=TokenResponse, tags=["Auth"])
 def login(credentials: LoginRequest, request: Request):
     request_id = getattr(request.state, "request_id", "unknown")
 
@@ -655,12 +688,14 @@ def login(credentials: LoginRequest, request: Request):
 @app.api_route(
     "/gateway/proxy/{service}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-    dependencies=[Depends(get_current_user)],
+    dependencies=PROTECTED_ROUTE_DEPENDENCIES,
+    tags=["Proxy"],
 )
 @app.api_route(
     "/gateway/proxy/{service}/{path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-    dependencies=[Depends(get_current_user)],
+    dependencies=PROTECTED_ROUTE_DEPENDENCIES,
+    tags=["Proxy"],
 )
 async def proxy_service(service: str, request: Request, path: str = ""):
     route_path = f"/{path}" if path else ""
@@ -675,7 +710,7 @@ async def proxy_service(service: str, request: Request, path: str = ""):
     )
 
 
-@app.get("/gateway/books", dependencies=[Depends(get_current_user)])
+@app.get("/gateway/books", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Books"])
 async def get_all_books(request: Request):
     return await forward_request(
         "books",
@@ -686,12 +721,12 @@ async def get_all_books(request: Request):
     )
 
 
-@app.get("/gateway/books/{book_id}", dependencies=[Depends(get_current_user)])
+@app.get("/gateway/books/{book_id}", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Books"])
 async def get_book(book_id: int, request: Request):
     return await forward_request("books", f"/api/books/{book_id}", "GET", request=request)
 
 
-@app.post("/gateway/books", dependencies=[Depends(get_current_user)])
+@app.post("/gateway/books", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Books"])
 async def create_book(
     request: Request,
     book: Annotated[BookCreateRequest, Body(description="Book payload")],
@@ -700,7 +735,7 @@ async def create_book(
     return await forward_request("books", "/api/books", "POST", json_body=body, request=request)
 
 
-@app.put("/gateway/books/{book_id}", dependencies=[Depends(get_current_user)])
+@app.put("/gateway/books/{book_id}", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Books"])
 async def update_book(
     book_id: int,
     request: Request,
@@ -725,22 +760,22 @@ async def update_book(
     return await forward_request("books", f"/api/books/{book_id}", "PUT", json_body=body, request=request)
 
 
-@app.delete("/gateway/books/{book_id}", dependencies=[Depends(get_current_user)])
+@app.delete("/gateway/books/{book_id}", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Books"])
 async def delete_book(book_id: int, request: Request):
     return await forward_request("books", f"/api/books/{book_id}", "DELETE", request=request)
 
 
-@app.get("/gateway/customers", dependencies=[Depends(get_current_user)])
+@app.get("/gateway/customers", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Customers"])
 async def get_all_customers(request: Request):
     return await forward_request("customers", "/api/customers", "GET", request=request)
 
 
-@app.get("/gateway/customers/{customer_id}", dependencies=[Depends(get_current_user)])
+@app.get("/gateway/customers/{customer_id}", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Customers"])
 async def get_customer(customer_id: int, request: Request):
     return await forward_request("customers", f"/api/customers/{customer_id}", "GET", request=request)
 
 
-@app.post("/gateway/customers", dependencies=[Depends(get_current_user)])
+@app.post("/gateway/customers", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Customers"])
 async def create_customer(
     request: Request,
     customer: Annotated[CustomerCreateRequest, Body(description="Customer payload")],
@@ -749,7 +784,7 @@ async def create_customer(
     return await forward_request("customers", "/api/customers", "POST", json_body=body, request=request)
 
 
-@app.put("/gateway/customers/{customer_id}", dependencies=[Depends(get_current_user)])
+@app.put("/gateway/customers/{customer_id}", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Customers"])
 async def update_customer(
     customer_id: int,
     request: Request,
@@ -774,32 +809,32 @@ async def update_customer(
     return await forward_request("customers", f"/api/customers/{customer_id}", "PUT", json_body=body, request=request)
 
 
-@app.delete("/gateway/customers/{customer_id}", dependencies=[Depends(get_current_user)])
+@app.delete("/gateway/customers/{customer_id}", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Customers"])
 async def delete_customer(customer_id: int, request: Request):
     return await forward_request("customers", f"/api/customers/{customer_id}", "DELETE", request=request)
 
 
-@app.get("/gateway/cart", dependencies=[Depends(get_current_user)])
+@app.get("/gateway/cart", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Cart"])
 async def get_all_cart_items(request: Request):
     return await forward_request("cart", "/api/cart", "GET", request=request)
 
 
-@app.get("/gateway/cart/health", dependencies=[Depends(get_current_user)])
+@app.get("/gateway/cart/health", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Cart"])
 async def get_cart_health(request: Request):
     return await forward_request("cart", "/health", "GET", request=request)
 
 
-@app.get("/gateway/cart/{item_id}", dependencies=[Depends(get_current_user)])
+@app.get("/gateway/cart/{item_id}", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Cart"])
 async def get_cart_item(item_id: int, request: Request):
     return await forward_request("cart", f"/api/cart/{item_id}", "GET", request=request)
 
 
-@app.get("/gateway/cart/customer/{customer_id}", dependencies=[Depends(get_current_user)])
+@app.get("/gateway/cart/customer/{customer_id}", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Cart"])
 async def get_customer_cart(customer_id: int, request: Request):
     return await forward_request("cart", f"/api/cart/customer/{customer_id}", "GET", request=request)
 
 
-@app.post("/gateway/cart", dependencies=[Depends(get_current_user)])
+@app.post("/gateway/cart", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Cart"])
 async def create_cart_item(
     request: Request,
     item: Annotated[CartItemCreateRequest, Body(description="Cart item payload")],
@@ -808,7 +843,7 @@ async def create_cart_item(
     return await forward_request("cart", "/api/cart", "POST", json_body=body, request=request)
 
 
-@app.put("/gateway/cart/{item_id}", dependencies=[Depends(get_current_user)])
+@app.put("/gateway/cart/{item_id}", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Cart"])
 async def update_cart_item(
     item_id: int,
     request: Request,
@@ -833,31 +868,31 @@ async def update_cart_item(
     return await forward_request("cart", f"/api/cart/{item_id}", "PUT", json_body=body, request=request)
 
 
-@app.delete("/gateway/cart/{item_id}", dependencies=[Depends(get_current_user)])
+@app.delete("/gateway/cart/{item_id}", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Cart"])
 async def delete_cart_item(item_id: int, request: Request):
     return await forward_request("cart", f"/api/cart/{item_id}", "DELETE", request=request)
 
 
-@app.delete("/gateway/cart/customer/{customer_id}", dependencies=[Depends(get_current_user)])
+@app.delete("/gateway/cart/customer/{customer_id}", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Cart"])
 async def clear_customer_cart(customer_id: int, request: Request):
     return await forward_request("cart", f"/api/cart/customer/{customer_id}", "DELETE", request=request)
 
 
-@app.get("/gateway/orders", dependencies=[Depends(get_current_user)])
+@app.get("/gateway/orders", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Orders"])
 async def get_all_orders(request: Request):
     return await forward_request("orders", "/api/orders", "GET", request=request)
 
 
-@app.get("/gateway/orders/{order_id}", dependencies=[Depends(get_current_user)])
+@app.get("/gateway/orders/{order_id}", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Orders"])
 async def get_order(order_id: str, request: Request):
     return await forward_request("orders", f"/api/orders/{order_id}", "GET", request=request)
 
 
-@app.get("/gateway/orders/customer/{customer_id}", dependencies=[Depends(get_current_user)])
+@app.get("/gateway/orders/customer/{customer_id}", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Orders"])
 async def get_customer_orders(customer_id: str, request: Request):
     return await forward_request("orders", f"/api/orders/customer/{customer_id}", "GET", request=request)
 
-@app.post("/gateway/orders", dependencies=[Depends(get_current_user)])
+@app.post("/gateway/orders", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Orders"])
 async def create_order(
     request: Request,
     order: Annotated[OrderCreateRequest, Body(description="Order payload")],
@@ -865,7 +900,7 @@ async def create_order(
     body = order.model_dump(exclude_none=True)
     return await forward_request("orders", "/api/orders", "POST", json_body=body, request=request)
 
-@app.put("/gateway/orders/{order_id}", dependencies=[Depends(get_current_user)])
+@app.put("/gateway/orders/{order_id}", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Orders"])
 async def update_order(
     order_id: str,
     request: Request,
@@ -890,6 +925,6 @@ async def update_order(
     return await forward_request("orders", f"/api/orders/{order_id}", "PUT", json_body=body, request=request)
 
 
-@app.delete("/gateway/orders/{order_id}", dependencies=[Depends(get_current_user)])
+@app.delete("/gateway/orders/{order_id}", dependencies=PROTECTED_ROUTE_DEPENDENCIES, tags=["Orders"])
 async def delete_order(order_id: str, request: Request):
     return await forward_request("orders", f"/api/orders/{order_id}", "DELETE", request=request)
