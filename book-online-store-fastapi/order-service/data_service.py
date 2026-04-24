@@ -27,16 +27,25 @@ class OrderMockDataService:
         if not document:
             return None
 
-        document = dict(document)
-        document["id"] = str(document["_id"]) 
-        document.pop("_id", None)
+        order_doc = dict(document)
+        raw_id = order_doc.pop("_id", None)
+        if raw_id is not None:
+            order_doc["id"] = str(raw_id)
 
-        return Order(**document)
+        if order_doc.get("customer_id") is not None:
+            order_doc["customer_id"] = str(order_doc["customer_id"])
+        if order_doc.get("total_amount") is not None:
+            order_doc["total_amount"] = float(order_doc["total_amount"])
+
+        try:
+            return Order(**order_doc)
+        except Exception:
+            return None
 
 
     def get_all_orders(self):
         docs = self.collection.find({})
-        return [self._to_order(doc) for doc in docs]
+        return [order for order in (self._to_order(doc) for doc in docs) if order is not None]
 
     def get_order_by_id(self, order_id: str):
         try:
@@ -45,8 +54,8 @@ class OrderMockDataService:
             return None
 
     def get_orders_by_customer_id(self, customer_id: str):
-        docs = self.collection.find({"customer_id": customer_id})
-        return [self._to_order(doc) for doc in docs]
+        docs = self.collection.find({"customer_id": {"$in": [customer_id, int(customer_id)]}}) if customer_id.isdigit() else self.collection.find({"customer_id": customer_id})
+        return [order for order in (self._to_order(doc) for doc in docs) if order is not None]
 
     def add_order(self, order_data: OrderCreate, total_amount: float, order_date: str, address: str):
         order_dict = order_data.model_dump()

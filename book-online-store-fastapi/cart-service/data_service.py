@@ -92,8 +92,27 @@ class CartMockDataService:
     def _to_cart_item(document: dict | None) -> CartItem | None:
         if not document:
             return None
-        document.pop("_id", None)
-        return CartItem(**document)
+
+        normalized = {k: v for k, v in document.items() if k != "_id"}
+
+        # Handle legacy field names and types from older cart records.
+        if "book_title" not in normalized and "title" in normalized:
+            normalized["book_title"] = normalized.get("title")
+
+        if normalized.get("book_id") is not None:
+            normalized["book_id"] = str(normalized["book_id"])
+
+        for key in ("id", "customer_id", "quantity"):
+            if normalized.get(key) is not None:
+                normalized[key] = int(normalized[key])
+
+        if normalized.get("price") is not None:
+            normalized["price"] = float(normalized["price"])
+
+        try:
+            return CartItem(**normalized)
+        except Exception:
+            return None
 
     def _with_db_guard(self, operation):
         try:
@@ -111,7 +130,7 @@ class CartMockDataService:
     def get_all_cart_items(self):
         def _op():
             docs = self.collection.find({})
-            return [self._to_cart_item(doc) for doc in docs]
+            return [item for item in (self._to_cart_item(doc) for doc in docs) if item is not None]
 
         return self._with_db_guard(_op)
 

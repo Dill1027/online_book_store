@@ -76,7 +76,9 @@ class BookDataService:
             
             books = []
             for doc in self.collection.find(query):
-                books.append(self._doc_to_book(doc))
+                book = self._doc_to_book(doc)
+                if book is not None:
+                    books.append(book)
             return books
 
     def get_book_by_id(self, book_id: int):
@@ -161,7 +163,19 @@ class BookDataService:
     @staticmethod
     def _doc_to_book(doc):
         """Convert MongoDB document to Book model"""
-        # Remove MongoDB's _id field if present
-        if "_id" in doc:
-            del doc["_id"]
-        return Book(**doc)
+        if not doc:
+            return None
+
+        book_doc = {k: v for k, v in doc.items() if k != "_id"}
+
+        if book_doc.get("id") is not None:
+            book_doc["id"] = int(book_doc["id"])
+        if book_doc.get("price") is not None:
+            book_doc["price"] = float(book_doc["price"])
+        if book_doc.get("stock") is not None:
+            book_doc["stock"] = int(book_doc["stock"])
+
+        try:
+            return Book(**book_doc)
+        except Exception:
+            return None

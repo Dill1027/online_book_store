@@ -25,15 +25,23 @@ class CustomerMockDataService:
 
         # Backfill missing/invalid ids for legacy records so response validation succeeds.
         raw_id = customer_doc.get("id")
-        if not isinstance(raw_id, int):
+        if raw_id is None:
             customer_doc["id"] = self._next_id()
             if mongo_id is not None:
                 self.collection.update_one(
                     {"_id": mongo_id},
                     {"$set": {"id": customer_doc["id"]}}
                 )
+        else:
+            try:
+                customer_doc["id"] = int(raw_id)
+            except Exception:
+                customer_doc["id"] = self._next_id()
 
-        return Customer(**customer_doc)
+        try:
+            return Customer(**customer_doc)
+        except Exception:
+            return None
 
     def _next_id(self) -> int:
         latest = self.collection.find_one({"id": {"$exists": True}}, sort=[("id", -1)])
@@ -43,7 +51,7 @@ class CustomerMockDataService:
 
     def get_all_customers(self):
         docs = self.collection.find({})
-        return [self._to_customer(doc) for doc in docs]
+        return [customer for customer in (self._to_customer(doc) for doc in docs) if customer is not None]
 
     def get_customer_by_id(self, customer_id: int):
         return self._to_customer(self.collection.find_one({"id": customer_id}))

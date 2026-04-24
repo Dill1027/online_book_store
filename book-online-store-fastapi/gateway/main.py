@@ -5,15 +5,15 @@ import time
 import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 import httpx
 import jwt
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Body, Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, Field
 
 
 # Error Response Models
@@ -278,6 +278,9 @@ SERVICES = {
 }
 
 BODY_METHODS = {"POST", "PUT", "PATCH"}
+EXAMPLE_BOOK_TITLE = "FastAPI Essentials"
+REQUIRED_UPDATE_BODY_MESSAGE = "Request body is required. Provide at least one field in JSON."
+EMPTY_UPDATE_BODY_MESSAGE = "Request body cannot be empty. Provide at least one field to update."
 
 
 class LoginRequest(BaseModel):
@@ -289,6 +292,154 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
+
+
+class BookCreateRequest(BaseModel):
+    title: str
+    author: str
+    price: float = Field(..., ge=0)
+    category: str
+    stock: int = Field(..., ge=0)
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "title": EXAMPLE_BOOK_TITLE,
+                "author": "Robert C. Martin",
+                "price": 42.5,
+                "category": "Programming",
+                "stock": 10,
+            }
+        }
+
+
+class BookUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    author: Optional[str] = None
+    price: Optional[float] = Field(default=None, ge=0)
+    category: Optional[str] = None
+    stock: Optional[int] = Field(default=None, ge=0)
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "price": 39.99,
+                "stock": 7,
+            }
+        }
+
+
+class CustomerCreateRequest(BaseModel):
+    name: str
+    email: str
+    phone: str
+    address: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "name": "John Doe",
+                "email": "john@example.com",
+                "phone": "0712345678",
+                "address": "Colombo",
+            }
+        }
+
+
+class CustomerUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "phone": "0770001111",
+                "address": "Kandy",
+            }
+        }
+
+
+class CartItemCreateRequest(BaseModel):
+    customer_id: int
+    book_id: str
+    book_title: Optional[str] = None
+    quantity: int = Field(..., gt=0)
+    price: Optional[float] = Field(default=None, ge=0)
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "customer_id": 1,
+                "book_id": "BK-1001",
+                "book_title": EXAMPLE_BOOK_TITLE,
+                "quantity": 2,
+                "price": 19.99,
+            }
+        }
+
+
+class CartItemUpdate(BaseModel):
+    book_id: Optional[str] = Field(default=None, description="Book identifier")
+    book_title: Optional[str] = Field(default=None, description="Book title")
+    quantity: Optional[int] = Field(default=None, gt=0, description="Quantity to set")
+    price: Optional[float] = Field(default=None, ge=0, description="Unit price")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "book_id": "BK-1001",
+                "book_title": EXAMPLE_BOOK_TITLE,
+                "quantity": 2,
+                "price": 19.99,
+            }
+        }
+
+
+class OrderItemRequest(BaseModel):
+    book_id: str
+    title: str
+    quantity: int = Field(..., gt=0)
+    price: float = Field(..., ge=0)
+
+
+class OrderCreateRequest(BaseModel):
+    customer_id: str
+    items: list[OrderItemRequest]
+    status: Optional[str] = "Pending"
+    address: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "customer_id": "1",
+                "items": [
+                    {
+                        "book_id": "BK-1001",
+                        "title": EXAMPLE_BOOK_TITLE,
+                        "quantity": 2,
+                        "price": 19.99,
+                    }
+                ],
+                "status": "Pending",
+                "address": "Colombo",
+            }
+        }
+
+
+class OrderUpdateRequest(BaseModel):
+    customer_id: Optional[str] = None
+    items: Optional[list[OrderItemRequest]] = None
+    status: Optional[str] = None
+    address: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": "Shipped",
+            }
+        }
 
 
 security = HTTPBearer()
@@ -443,7 +594,14 @@ async def parse_json_body(request: Request) -> Optional[dict]:
         return None
 
     try:
-        return await request.json()
+        raw_body = await request.body()
+        if not raw_body or not raw_body.strip():
+            raise ValidationError(
+                "body",
+                "Request body is required. Provide a valid JSON object.",
+            )
+
+        return json.loads(raw_body)
     except json.JSONDecodeError as exc:
         request_id = getattr(request.state, "request_id", "unknown")
         logger.warning(f"[{request_id}] Invalid JSON in request body: {str(exc)}")
@@ -534,14 +692,36 @@ async def get_book(book_id: int, request: Request):
 
 
 @app.post("/gateway/books", dependencies=[Depends(get_current_user)])
-async def create_book(request: Request):
-    body = await parse_json_body(request)
+async def create_book(
+    request: Request,
+    book: Annotated[BookCreateRequest, Body(description="Book payload")],
+):
+    body = book.model_dump(exclude_none=True)
     return await forward_request("books", "/api/books", "POST", json_body=body, request=request)
 
 
 @app.put("/gateway/books/{book_id}", dependencies=[Depends(get_current_user)])
-async def update_book(book_id: int, request: Request):
-    body = await parse_json_body(request)
+async def update_book(
+    book_id: int,
+    request: Request,
+    book: Annotated[
+        Optional[BookUpdateRequest],
+        Body(description="Fields to update for a book"),
+    ] = None,
+):
+    if book is None:
+        raise ValidationError(
+            "body",
+            REQUIRED_UPDATE_BODY_MESSAGE,
+        )
+
+    body = book.model_dump(exclude_unset=True, exclude_none=True)
+    if not body:
+        raise ValidationError(
+            "body",
+            EMPTY_UPDATE_BODY_MESSAGE,
+        )
+
     return await forward_request("books", f"/api/books/{book_id}", "PUT", json_body=body, request=request)
 
 
@@ -561,14 +741,36 @@ async def get_customer(customer_id: int, request: Request):
 
 
 @app.post("/gateway/customers", dependencies=[Depends(get_current_user)])
-async def create_customer(request: Request):
-    body = await parse_json_body(request)
+async def create_customer(
+    request: Request,
+    customer: Annotated[CustomerCreateRequest, Body(description="Customer payload")],
+):
+    body = customer.model_dump(exclude_none=True)
     return await forward_request("customers", "/api/customers", "POST", json_body=body, request=request)
 
 
 @app.put("/gateway/customers/{customer_id}", dependencies=[Depends(get_current_user)])
-async def update_customer(customer_id: int, request: Request):
-    body = await parse_json_body(request)
+async def update_customer(
+    customer_id: int,
+    request: Request,
+    customer: Annotated[
+        Optional[CustomerUpdateRequest],
+        Body(description="Fields to update for a customer"),
+    ] = None,
+):
+    if customer is None:
+        raise ValidationError(
+            "body",
+            REQUIRED_UPDATE_BODY_MESSAGE,
+        )
+
+    body = customer.model_dump(exclude_unset=True, exclude_none=True)
+    if not body:
+        raise ValidationError(
+            "body",
+            EMPTY_UPDATE_BODY_MESSAGE,
+        )
+
     return await forward_request("customers", f"/api/customers/{customer_id}", "PUT", json_body=body, request=request)
 
 
@@ -598,14 +800,36 @@ async def get_customer_cart(customer_id: int, request: Request):
 
 
 @app.post("/gateway/cart", dependencies=[Depends(get_current_user)])
-async def create_cart_item(request: Request):
-    body = await parse_json_body(request)
+async def create_cart_item(
+    request: Request,
+    item: Annotated[CartItemCreateRequest, Body(description="Cart item payload")],
+):
+    body = item.model_dump(exclude_none=True)
     return await forward_request("cart", "/api/cart", "POST", json_body=body, request=request)
 
 
 @app.put("/gateway/cart/{item_id}", dependencies=[Depends(get_current_user)])
-async def update_cart_item(item_id: int, request: Request):
-    body = await parse_json_body(request)
+async def update_cart_item(
+    item_id: int,
+    request: Request,
+    item: Annotated[
+        Optional[CartItemUpdate],
+        Body(description="Fields to update for a cart item"),
+    ] = None,
+):
+    if item is None:
+        raise ValidationError(
+            "body",
+            REQUIRED_UPDATE_BODY_MESSAGE,
+        )
+
+    body = item.model_dump(exclude_unset=True, exclude_none=True)
+    if not body:
+        raise ValidationError(
+            "body",
+            EMPTY_UPDATE_BODY_MESSAGE,
+        )
+
     return await forward_request("cart", f"/api/cart/{item_id}", "PUT", json_body=body, request=request)
 
 
@@ -634,13 +858,35 @@ async def get_customer_orders(customer_id: str, request: Request):
     return await forward_request("orders", f"/api/orders/customer/{customer_id}", "GET", request=request)
 
 @app.post("/gateway/orders", dependencies=[Depends(get_current_user)])
-async def create_order(request: Request):
-    body = await parse_json_body(request)
+async def create_order(
+    request: Request,
+    order: Annotated[OrderCreateRequest, Body(description="Order payload")],
+):
+    body = order.model_dump(exclude_none=True)
     return await forward_request("orders", "/api/orders", "POST", json_body=body, request=request)
 
 @app.put("/gateway/orders/{order_id}", dependencies=[Depends(get_current_user)])
-async def update_order(order_id: str, request: Request):
-    body = await parse_json_body(request)
+async def update_order(
+    order_id: str,
+    request: Request,
+    order: Annotated[
+        Optional[OrderUpdateRequest],
+        Body(description="Fields to update for an order"),
+    ] = None,
+):
+    if order is None:
+        raise ValidationError(
+            "body",
+            REQUIRED_UPDATE_BODY_MESSAGE,
+        )
+
+    body = order.model_dump(exclude_unset=True, exclude_none=True)
+    if not body:
+        raise ValidationError(
+            "body",
+            EMPTY_UPDATE_BODY_MESSAGE,
+        )
+
     return await forward_request("orders", f"/api/orders/{order_id}", "PUT", json_body=body, request=request)
 
 
