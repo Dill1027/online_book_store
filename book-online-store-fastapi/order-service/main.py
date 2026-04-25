@@ -1,6 +1,10 @@
+from datetime import datetime, timezone
 from typing import List
 from fastapi import FastAPI, HTTPException, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi import Request
 
 from models import Order, OrderCreate, OrderUpdate
 from service import OrderService
@@ -18,6 +22,33 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    details = []
+    for err in exc.errors():
+        location = [str(item) for item in err.get("loc", []) if item != "body"]
+        details.append(
+            {
+                "field": ".".join(location) if location else "body",
+                "message": err.get("msg", "Invalid value"),
+                "error_type": err.get("type", "validation_error"),
+                "rejected_value": err.get("input"),
+            }
+        )
+
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "code": "VALIDATION_ERROR",
+            "message": "Request validation failed",
+            "path": request.url.path,
+            "method": request.method,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "details": details,
+        },
+    )
 
 @app.get("/")
 def read_root():

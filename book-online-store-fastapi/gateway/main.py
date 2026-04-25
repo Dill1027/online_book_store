@@ -10,10 +10,11 @@ from typing import Annotated, Any, Optional
 import httpx
 import jwt
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # Error Response Models
@@ -217,6 +218,39 @@ async def value_error_handler(request: Request, exc: ValueError):
 
     return JSONResponse(
         status_code=status.HTTP_400_BAD_REQUEST, content=error_response.dict()
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    request_id = getattr(request.state, "request_id", "unknown")
+
+    details = [
+        {
+            "field": ".".join(str(item) for item in err.get("loc", []) if item != "body"),
+            "reason": err.get("msg", "Invalid value"),
+        }
+        for err in exc.errors()
+    ]
+
+    error_response = ErrorResponse(
+        request_id=request_id,
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        error=ErrorDetail(
+            code="VALIDATION_ERROR",
+            message="Request validation failed",
+            details={"errors": details},
+        ),
+        path=request.url.path,
+        method=request.method,
+    )
+
+    logger.warning(f"[{request_id}] REQUEST VALIDATION ERROR | {details}")
+
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content=error_response.dict(),
     )
 
 
@@ -426,10 +460,24 @@ class CartItemUpdate(BaseModel):
 
 
 class OrderItemRequest(BaseModel):
-    book_id: str
-    title: str
-    quantity: int = Field(..., gt=0)
-    price: float = Field(..., ge=0)
+    book_id: str = Field(..., description="Book identifier")
+    title: str = Field(..., description="Book title")
+    quantity: int = Field(..., description="Quantity ordered")
+    price: float = Field(..., description="Unit price")
+
+    @field_validator("quantity")
+    @classmethod
+    def validate_quantity(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("Quantity must be at least 1")
+        return value
+
+    @field_validator("price")
+    @classmethod
+    def validate_price(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("Price must be greater than or equal to 0")
+        return value
 
 
 class OrderCreateRequest(BaseModel):
@@ -441,31 +489,41 @@ class OrderCreateRequest(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "customer_id": "1",
+                "customer_id": "string",
                 "items": [
                     {
-                        "book_id": "BK-1001",
-                        "title": EXAMPLE_BOOK_TITLE,
-                        "quantity": 2,
-                        "price": 19.99,
+                        "book_id": "string",
+                        "title": "string",
+                        "quantity": 1,
+                        "price": 0,
                     }
                 ],
                 "status": "Pending",
-                "address": "Colombo",
+                "address": "string",
             }
         }
 
 
 class OrderUpdateRequest(BaseModel):
-    customer_id: Optional[str] = None
-    items: Optional[list[OrderItemRequest]] = None
-    status: Optional[str] = None
-    address: Optional[str] = None
+    customer_id: str
+    items: list[OrderItemRequest]
+    status: str
+    address: str
 
     class Config:
         json_schema_extra = {
             "example": {
-                "status": "Shipped",
+                "customer_id": "string",
+                "items": [
+                    {
+                        "book_id": "string",
+                        "title": "string",
+                        "quantity": 1,
+                        "price": 0,
+                    }
+                ],
+                "status": "Pending",
+                "address": "string",
             }
         }
 
@@ -904,23 +962,9 @@ async def create_order(
 async def update_order(
     order_id: str,
     request: Request,
-    order: Annotated[
-        Optional[OrderUpdateRequest],
-        Body(description="Fields to update for an order"),
-    ] = None,
+    order: Annotated[OrderUpdateRequest, Body(description="Order payload")],
 ):
-    if order is None:
-        raise ValidationError(
-            "body",
-            REQUIRED_UPDATE_BODY_MESSAGE,
-        )
-
-    body = order.model_dump(exclude_unset=True, exclude_none=True)
-    if not body:
-        raise ValidationError(
-            "body",
-            EMPTY_UPDATE_BODY_MESSAGE,
-        )
+    body = order.model_dump(exclude_none=True)
 
     return await forward_request("orders", f"/api/orders/{order_id}", "PUT", json_body=body, request=request)
 
