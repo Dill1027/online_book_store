@@ -4,16 +4,41 @@ import json
 import time
 import asyncio
 import uuid
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Optional
 
 import httpx
 import jwt
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+# Validation Helper Functions
+def _validate_phone_number(value: str) -> str:
+    cleaned = value.strip()
+    if not cleaned.isdigit():
+        raise ValueError("Phone number must contain only digits")
+
+    is_country_format = cleaned.startswith("94") and len(cleaned) == 11
+    is_local_format = cleaned.startswith("0") and len(cleaned) == 10
+
+    if not (is_country_format or is_local_format):
+        raise ValueError("Phone number must be 94 + 9 digits or 0 + 9 digits")
+
+    return cleaned
+
+
+def _validate_email_address(value: str) -> str:
+    cleaned = value.strip().lower()
+    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+    if not re.match(pattern, cleaned):
+        raise ValueError("Invalid email address format")
+    return cleaned
 
 
 # Error Response Models
@@ -220,6 +245,38 @@ async def value_error_handler(request: Request, exc: ValueError):
     )
 
 
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handle validation errors with detailed error messages"""
+    request_id = getattr(request.state, "request_id", "unknown")
+    errors = []
+    
+    for error in exc.errors():
+        field = ".".join(str(x) for x in error["loc"][1:])
+        message = error["msg"]
+        errors.append({"field": field, "message": message})
+    
+    error_response = ErrorResponse(
+        request_id=request_id,
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        error=ErrorDetail(
+            code="VALIDATION_ERROR",
+            message="Request validation failed",
+            details={"errors": errors},
+        ),
+        path=request.url.path,
+        method=request.method,
+    )
+    
+    logger.warning(f"[{request_id}] VALIDATION ERROR | {len(errors)} field(s) failed validation")
+    
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, 
+        content=error_response.dict()
+    )
+
+
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
     request_id = getattr(request.state, "request_id", "unknown")
@@ -363,13 +420,23 @@ class CustomerCreateRequest(BaseModel):
     phone: str
     address: str
 
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, value: str) -> str:
+        return _validate_phone_number(value)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        return _validate_email_address(value)
+
     class Config:
         json_schema_extra = {
             "example": {
-                "name": "John Doe",
-                "email": "john@example.com",
-                "phone": "0712345678",
-                "address": "Colombo",
+                "name": "String",
+                "email": "string@example.com",
+                "phone": "94########",
+                "address": "string",
             }
         }
 
@@ -380,11 +447,27 @@ class CustomerUpdateRequest(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
 
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        return _validate_phone_number(value)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        return _validate_email_address(value)
+
     class Config:
         json_schema_extra = {
             "example": {
-                "phone": "0770001111",
-                "address": "Kandy",
+                "name": "String",
+                "email": "string@example.com",
+                "phone": "94########",
+                "address": "string",
             }
         }
 
